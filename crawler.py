@@ -412,6 +412,27 @@ class CrawlJob:
                 record["date_modified"] = clean_date(found["dateModified"])
                 if "JSON-LD" not in sources:
                     sources.append("JSON-LD")
+        # Dự phòng cuối: thẻ <time datetime> hoặc thuộc tính ngày tùy chỉnh
+        # của CMS (vd vib.com.vn dùng date-created / date-up)
+        if not record["date_published"]:
+            tag = soup.find("time", attrs={"datetime": True})
+            if tag and tag.get("datetime", "").strip():
+                record["date_published"] = clean_date(tag["datetime"])
+                sources.append("thẻ time")
+        if not record["date_published"]:
+            for attr in ("date-created", "data-created", "data-published", "data-date"):
+                tag = soup.find(attrs={attr: True})
+                if tag and tag.get(attr, "").strip():
+                    record["date_published"] = clean_date(tag[attr])
+                    sources.append(f"attr {attr}")
+                    break
+        if not record["date_modified"]:
+            for attr in ("date-up", "date-updated", "data-updated", "data-modified"):
+                tag = soup.find(attrs={attr: True})
+                if tag and tag.get(attr, "").strip():
+                    record["date_modified"] = clean_date(tag[attr])
+                    sources.append(f"attr {attr}")
+                    break
         if sources:
             record["date_source"] = " + ".join(sources)
 
