@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Frog — Tool quét Web URL</title>
+<style>
+:root{
+  --primary:#004aef;
+  --accent:#0def9b;
+  --secondary:#3370ff;
+  --bg:#ffffff;
+  --text:#000000;
+  --muted:#5a6472;
+  --border:#e4e8f0;
+  --soft:#f4f7ff;
+  --danger:#e02b3d;
+  --warn:#e08a00;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+.container{max-width:1280px;margin:0 auto;padding:24px 20px 60px}
+
+header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--primary),var(--secondary));display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:800}
+header h1{font-size:20px;font-weight:800}
+header p{color:var(--muted);font-size:13px}
+
+.card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,74,239,.05)}
+
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tab{padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:600;font-size:13px;color:var(--muted)}
+.tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
+
+label{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
+input[type=text],input[type=number],textarea{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;outline:none;transition:border-color .15s}
+input:focus,textarea:focus{border-color:var(--secondary)}
+textarea{resize:vertical;min-height:70px}
+.hint{color:var(--muted);font-size:12px;margin-top:4px}
+
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
+.row>div{flex:1;min-width:180px}
+.row .small{flex:0 0 130px;min-width:130px}
+
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:9px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .15s}
+.btn:hover{opacity:.88}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-outline{background:#fff;color:var(--primary);border:1.5px solid var(--primary)}
+.btn-accent{background:var(--accent);color:#00331f}
+
+details.advanced{margin-top:14px;border-top:1px dashed var(--border);padding-top:12px}
+details.advanced summary{cursor:pointer;font-weight:600;color:var(--secondary);font-size:13px}
+.patterns-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px}
+.checkline{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px}
+.checkline input{width:auto}
+
+/* Progress */
+#progressCard{display:none}
+.progress-track{height:10px;background:var(--soft);border-radius:6px;overflow:hidden;margin:10px 0}
+.progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:6px;transition:width .4s}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.chip{background:var(--soft);border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:12px;font-weight:600}
+.chip b{color:var(--primary)}
+#recentUrl{color:var(--muted);font-size:12px;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.state-badge{padding:3px 12px;border-radius:99px;font-size:12px;font-weight:700}
+.state-running{background:#e6efff;color:var(--primary)}
+.state-done{background:#d9fdf0;color:#007a4d}
+.state-stopped,.state-error{background:#ffe5e8;color:var(--danger)}
+
+/* Summary */
+#summaryGrid{display:none;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.stat{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.stat .num{font-size:24px;font-weight:800;color:var(--primary)}
+.stat.bad .num{color:var(--danger)}
+.stat.warn .num{color:var(--warn)}
+.stat.good .num{color:#00a86b}
+.stat .lbl{font-size:12px;color:var(--muted);font-weight:600;margin-top:2px}
+
+/* Table */
+#resultsCard{display:none}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.toolbar select,.toolbar input{padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;outline:none}
+.toolbar input{flex:1;min-width:200px}
+.toolbar .spacer{flex:1}
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{background:var(--primary);color:#fff;text-align:left;padding:9px 10px;font-weight:700;white-space:nowrap;position:sticky;top:0}
+td{padding:8px 10px;border-top:1px solid var(--border);vertical-align:top}
+tr.data-row{cursor:pointer}
+tr.data-row:hover{background:var(--soft)}
+td.url-cell{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.url-cell a{color:var(--primary);text-decoration:none}
+td.url-cell a:hover{text-decoration:underline}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700}
+.pill-homepage{background:#e6efff;color:var(--primary)}
+.pill-category{background:#eee6ff;color:#6b2bd9}
+.pill-product{background:#d9fdf0;color:#007a4d}
+.pill-blog{background:#fff3d9;color:#a36a00}
+.pill-other{background:#eef1f5;color:var(--muted)}
+.st-ok{color:#00a86b;font-weight:700}
+.st-redirect{color:var(--warn);font-weight:700}
+.st-bad{color:var(--danger);font-weight:700}
+.flag{color:var(--danger);font-weight:700}
+.okmark{color:#00a86b;font-weight:700}
+.detail-row td{background:var(--soft);font-size:12.5px}
+.detail-grid{display:grid;grid-template-columns:170px 1fr;gap:4px 14px;padding:6px 2px}
+.detail-grid dt{font-weight:700;color:var(--muted)}
+.detail-grid dd{word-break:break-all}
+.img-list{margin-top:8px;max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:#fff}
+.img-list table{font-size:12px}
+.count-note{color:var(--muted);font-size:12px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">◈</div>
+    <div>
+      <h1>Mini Frog — Tool quét Web URL</h1>
+      <p>Crawl theo thứ tự: Trang chủ → Danh mục/Dịch vụ → Sản phẩm → Blog · chạy local, không cần API</p>
+    </div>
+  </header>
+
+  <!-- Cấu hình -->
+  <div class="card" id="configCard">
+    <div class="tabs">
+      <button class="tab active" data-mode="auto">🌐 Tự động từ trang chủ</button>
+      <button class="tab" data-mode="seeds">📂 Theo thư mục mẹ tôi chọn</button>
+      <button class="tab" data-mode="list">📋 Chỉ đúng URL tôi dán</button>
+    </div>
+
+    <div id="autoInput">
+      <label>Website cần quét</label>
+      <input type="text" id="urlInput" placeholder="vd: hacom.vn hoặc https://example.com">
+    </div>
+
+    <div id="seedsInput" style="display:none">
+      <label>Danh sách URL thư mục mẹ (mỗi dòng một URL)</label>
+      <textarea id="seedsArea" rows="4" placeholder="https://example.com/may-giat/&#10;https://example.com/tu-lanh/&#10;Tool sẽ chỉ cào các URL con nằm trong các thư mục này"></textarea>
+    </div>
+
+    <div id="listInput" style="display:none">
+      <label>Danh sách URL cần quét (mỗi dòng một URL) — <span id="listCount" style="color:var(--secondary)">0 URL</span></label>
+      <textarea id="listArea" rows="8" placeholder="https://example.com/san-pham/abc&#10;https://example.com/san-pham/xyz&#10;Tool chỉ quét ĐÚNG các URL này, không lần theo link nào khác. Dán được URL từ nhiều domain."></textarea>
+      <p class="hint">Mẹo: copy cột URL từ Excel/Google Sheets rồi dán thẳng vào đây. Giới hạn 5.000 URL.</p>
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <div class="small">
+        <label>Giới hạn URL</label>
+        <input type="number" id="maxUrls" value="1000" min="10" max="5000">
+      </div>
+      <div class="small">
+        <label>Luồng song song</label>
+        <input type="number" id="concurrency" value="5" min="1" max="10">
+      </div>
+      <div style="flex:2">
+        <button class="btn btn-primary" id="startBtn">▶ Bắt đầu crawl</button>
+        <button class="btn btn-danger" id="stopBtn" style="display:none">■ Dừng</button>
+      </div>
+    </div>
+
+    <details class="advanced">
+      <summary>⚙ Pattern phân loại trang (sửa nếu website đặt URL khác)</summary>
+      <div class="patterns-grid">
+        <div>
+          <label>Danh mục / Dịch vụ</label>
+          <textarea id="patCategory" rows="3"></textarea>
+        </div>
+        <div>
+          <label>Sản phẩm</label>
+          <textarea id="patProduct" rows="3"></textarea>
+        </div>
+        <div>
+          <label>Blog / Tin tức</label>
+          <textarea id="patBlog" rows="3"></textarea>
+        </div>
+      </div>
+      <p class="hint">Mỗi dòng một đoạn URL. URL chứa đoạn nào sẽ được xếp vào loại đó. Ưu tiên: Danh mục → Blog → Sản phẩm.</p>
+      <div style="margin-top:12px">
+        <label>Loại trừ URL (regex hoặc chuỗi con — mỗi dòng một mẫu)</label>
+        <textarea id="excludeArea" rows="2" placeholder="/tag/&#10;\?sort=&#10;/gio-hang"></textarea>
+        <p class="hint">URL khớp bất kỳ mẫu nào sẽ bị bỏ qua. Không áp dụng cho chế độ "Chỉ đúng URL tôi dán".</p>
+      </div>
+      <div class="checkline">
+        <input type="checkbox" id="respectRobots" checked>
+        <label for="respectRobots" style="margin:0">Tôn trọng robots.txt (khuyến nghị bật)</label>
+      </div>
+    </details>
+  </div>
+
+  <!-- Tiến trình -->
+  <div class="card" id="progressCard">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong>Tiến trình crawl</strong>
+      <span class="state-badge state-running" id="stateBadge">Đang chạy</span>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="chips">
+      <span class="chip">Đã quét: <b id="cFetched">0</b>/<span id="cMax">0</span></span>
+      <span class="chip">Hàng đợi: <b id="cQueued">0</b></span>
+      <span class="chip">Lỗi: <b id="cErrors">0</b></span>
+      <span class="chip">⏱ <b id="cElapsed">0s</b></span>
+      <span class="chip">🏠 <b id="cHome">0</b></span>
+      <span class="chip">📂 Danh mục: <b id="cCategory">0</b></span>
+      <span class="chip">📦 Sản phẩm: <b id="cProduct">0</b></span>
+      <span class="chip">📝 Blog: <b id="cBlog">0</b></span>
+      <span class="chip">Khác: <b id="cOther">0</b></span>
+    </div>
+    <div id="recentUrl"></div>
+  </div>
+
+  <!-- Tổng quan -->
+  <div id="summaryGrid">
+    <div class="stat"><div class="num" id="sTotal">0</div><div class="lbl">Tổng URL</div></div>
+    <div class="stat bad"><div class="num" id="sErrors">0</div><div class="lbl">Lỗi 4xx/5xx/timeout</div></div>
+    <div class="stat warn"><div class="num" id="sRedirects">0</div><div class="lbl">Redirect</div></div>
+    <div class="stat warn"><div class="num" id="sNoTitle">0</div><div class="lbl">Thiếu title/meta</div></div>
+    <div class="stat warn"><div class="num" id="sDupTitle">0</div><div class="lbl">Title trùng lặp</div></div>
+    <div class="stat warn"><div class="num" id="sMissingAlt">0</div><div class="lbl">Trang có ảnh thiếu alt</div></div>
+    <div class="stat warn"><div class="num" id="sThin">0</div><div class="lbl">Thin content (&lt;150 từ)</div></div>
+    <div class="stat bad"><div class="num" id="sOrphan">–</div><div class="lbl">Orphan pages (sitemap)</div></div>
+  </div>
+
+  <!-- Orphan pages -->
+  <div class="card" id="orphanCard" style="display:none">
+    <strong>🏝 Orphan pages — có trong sitemap.xml nhưng không có link nội bộ nào trỏ tới (<span id="orphanCount">0</span>)</strong>
+    <p class="hint" id="orphanNote" style="margin-top:6px"></p>
+    <div class="img-list" style="margin-top:8px;max-height:260px"><table><tbody id="orphanBody"></tbody></table></div>
+  </div>
+
+  <!-- Kết quả -->
+  <div class="card" id="resultsCard">
+    <div class="toolbar">
+      <select id="filterType">
+        <option value="">Tất cả loại trang</option>
+        <option value="homepage">Trang chủ</option>
+        <option value="category">Danh mục / Dịch vụ</option>
+        <option value="product">Sản phẩm</option>
+        <option value="blog">Blog / Tin tức</option>
+        <option value="other">Khác</option>
+      </select>
+      <select id="filterIssue">
+        <option value="">Tất cả vấn đề</option>
+        <option value="error">Lỗi 4xx/5xx/timeout</option>
+        <option value="redirect">Redirect</option>
+        <option value="no_title">Thiếu title</option>
+        <option value="dup_title">Title trùng lặp</option>
+        <option value="no_meta">Thiếu meta description</option>
+        <option value="dup_meta">Meta trùng lặp</option>
+        <option value="no_h1">Thiếu H1</option>
+        <option value="multi_h1">Nhiều H1</option>
+        <option value="canonical">Canonical sai/thiếu</option>
+        <option value="noindex">Noindex</option>
+        <option value="missing_alt">Ảnh thiếu alt</option>
+        <option value="thin">Thin content (&lt;150 từ)</option>
+        <option value="no_inlinks">Không có inlink</option>
+      </select>
+      <input type="text" id="searchBox" placeholder="🔍 Tìm theo URL hoặc title...">
+      <span class="spacer"></span>
+      <a class="btn btn-accent" href="/api/export/xlsx" download>⬇ Excel</a>
+      <a class="btn btn-outline" href="/api/export/csv" download>⬇ CSV</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>URL</th><th>Loại</th><th>Tầng</th><th>Status</th><th>Title</th><th>Meta</th>
+          <th>H1</th><th>H2</th><th>Canonical</th><th>Ảnh (thiếu alt)</th><th>Số từ</th><th>Inlinks</th>
+          <th>Ngày đăng</th><th>Cập nhật</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <p class="count-note" id="countNote"></p>
+  </div>
+</div>
+
+<script>
+let records = [];
+let pollTimer = null;
+let dupTitles = new Set(), dupMetas = new Set();
+const $ = id => document.getElementById(id);
+
+// ---------- Khởi tạo pattern mặc định ----------
+fetch('/api/defaults').then(r => r.json()).then(d => {
+  $('patCategory').value = d.patterns.category.join('\n');
+  $('patProduct').value = d.patterns.product.join('\n');
+  $('patBlog').value = d.patterns.blog.join('\n');
+});
+
+// ---------- Tabs ----------
+let mode = 'auto';
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  mode = t.dataset.mode;
+  $('autoInput').style.display = mode === 'auto' ? '' : 'none';
+  $('seedsInput').style.display = mode === 'seeds' ? '' : 'none';
+  $('listInput').style.display = mode === 'list' ? '' : 'none';
+  // Chế độ list: giới hạn = số URL đã dán nên ẩn ô giới hạn
+  $('maxUrls').parentElement.style.display = mode === 'list' ? 'none' : '';
+});
+
+// Đếm số URL đã dán trong chế độ list
+$('listArea').oninput = () => {
+  const n = $('listArea').value.split('\n').filter(s => s.trim()).length;
+  $('listCount').textContent = n + ' URL';
+};
+
+// ---------- Bắt đầu / Dừng ----------
+$('startBtn').onclick = async () => {
+  const seedsSource = mode === 'list' ? 'listArea' : 'seedsArea';
+  const body = {
+    mode,
+    url: $('urlInput').value.trim(),
+    seeds: $(seedsSource).value.split('\n').map(s => s.trim()).filter(Boolean),
+    max_urls: parseInt($('maxUrls').value) || 1000,
+    concurrency: parseInt($('concurrency').value) || 5,
+    respect_robots: $('respectRobots').checked,
+    exclude: $('excludeArea').value.split('\n').map(s => s.trim()).filter(Boolean),
+    patterns: {
+      category: $('patCategory').value.split('\n').map(s => s.trim()).filter(Boolean),
+      product: $('patProduct').value.split('\n').map(s => s.trim()).filter(Boolean),
+      blog: $('patBlog').value.split('\n').map(s => s.trim()).filter(Boolean),
+    },
+  };
+  if (mode === 'auto' && !body.url) { alert('Nhập website cần quét'); return; }
+  if (mode === 'seeds' && !body.seeds.length) { alert('Nhập ít nhất 1 URL thư mục mẹ'); return; }
+  if (mode === 'list' && !body.seeds.length) { alert('Dán ít nhất 1 URL cần quét'); return; }
+
+  const res = await fetch('/api/crawl', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (!res.ok) { alert((await res.json()).detail || 'Không khởi động được'); return; }
+
+  records = [];
+  $('tbody').innerHTML = '';
+  showResultCards();
+  $('startBtn').style.display = 'none';
+  $('stopBtn').style.display = 'inline-flex';
+  poll();
+  pollTimer = setInterval(poll, 900);
+};
+
+function showResultCards() {
+  $('progressCard').style.display = 'block';
+  $('summaryGrid').style.display = 'grid';
+  $('resultsCard').style.display = 'block';
+}
+
+// Khi mở/refresh trang: nếu server đang có dữ liệu crawl thì hiển thị lại ngay
+(async () => {
+  const st = await (await fetch('/api/status')).json();
+  if (st.state === 'running' || st.fetched > 0) {
+    showResultCards();
+    if (st.state === 'running') {
+      $('startBtn').style.display = 'none';
+      $('stopBtn').style.display = 'inline-flex';
+      pollTimer = setInterval(poll, 900);
+    }
+    poll();
+  }
+})();
+
+$('stopBtn').onclick = () => fetch('/api/stop', {method: 'POST'});
+
+// ---------- Poll trạng thái + kết quả ----------
+async function poll() {
+  const st = await (await fetch('/api/status')).json();
+  const res = await (await fetch('/api/results?since=' + records.length)).json();
+  if (res.records.length) {
+    records.push(...res.records);
+    computeDuplicates();
+    renderTable();
+  }
+  updateProgress(st);
+  updateSummary();
+  if (st.state !== 'running') {
+    clearInterval(pollTimer);
+    $('startBtn').style.display = 'inline-flex';
+    $('stopBtn').style.display = 'none';
+    // Tải lại toàn bộ vì phân tầng + inlinks được tính lại khi crawl xong
+    const all = await (await fetch('/api/results?since=0')).json();
+    records = all.records;
+    computeDuplicates(); renderTable(); updateSummary();
+    loadOrphans();
+  }
+}
+
+function updateProgress(st) {
+  const pct = st.max_urls ? Math.min(100, st.fetched / st.max_urls * 100) : 0;
+  $('progressFill').style.width = pct + '%';
+  $('cFetched').textContent = st.fetched;
+  $('cMax').textContent = st.max_urls;
+  $('cQueued').textContent = st.queued;
+  $('cErrors').textContent = st.errors;
+  $('cElapsed').textContent = st.elapsed + 's';
+  $('cHome').textContent = st.by_type.homepage || 0;
+  $('cCategory').textContent = st.by_type.category || 0;
+  $('cProduct').textContent = st.by_type.product || 0;
+  $('cBlog').textContent = st.by_type.blog || 0;
+  $('cOther').textContent = st.by_type.other || 0;
+  $('recentUrl').textContent = st.recent.length ? '→ ' + st.recent[st.recent.length - 1] : '';
+  const badge = $('stateBadge');
+  const map = {running: ['Đang chạy', 'state-running'], done: ['Hoàn tất ✓', 'state-done'],
+               stopped: ['Đã dừng', 'state-stopped'], error: ['Lỗi: ' + st.message, 'state-error']};
+  const [label, cls] = map[st.state] || ['—', 'state-running'];
+  badge.textContent = label;
+  badge.className = 'state-badge ' + cls;
+}
+
+function computeDuplicates() {
+  const tCount = {}, mCount = {};
+  for (const r of records) {
+    if (r.status !== 200) continue;
+    if (r.title) tCount[r.title] = (tCount[r.title] || 0) + 1;
+    if (r.meta_description) mCount[r.meta_description] = (mCount[r.meta_description] || 0) + 1;
+  }
+  dupTitles = new Set(Object.keys(tCount).filter(k => tCount[k] > 1));
+  dupMetas = new Set(Object.keys(mCount).filter(k => mCount[k] > 1));
+}
+
+function updateSummary() {
+  let errors = 0, redirects = 0, noTitleMeta = 0, missingAlt = 0, thin = 0;
+  const dupUrls = new Set();
+  for (const r of records) {
+    if (typeof r.status !== 'number' || r.status >= 400) errors++;
+    if (r.redirect_chain && r.redirect_chain.length) redirects++;
+    if (r.status === 200 && (!r.title || !r.meta_description)) noTitleMeta++;
+    if (r.images_missing_alt > 0) missingAlt++;
+    if (r.status === 200 && (r.word_count || 0) < 150) thin++;
+    if (r.title && dupTitles.has(r.title)) dupUrls.add(r.url);
+  }
+  $('sTotal').textContent = records.length;
+  $('sErrors').textContent = errors;
+  $('sRedirects').textContent = redirects;
+  $('sNoTitle').textContent = noTitleMeta;
+  $('sDupTitle').textContent = dupUrls.size;
+  $('sMissingAlt').textContent = missingAlt;
+  $('sThin').textContent = thin;
+}
+
+async function loadOrphans() {
+  const o = await (await fetch('/api/orphans')).json();
+  $('sOrphan').textContent = o.sitemap_count ? o.orphans.length : '–';
+  if (!o.orphans.length) { $('orphanCard').style.display = 'none'; return; }
+  $('orphanCard').style.display = 'block';
+  $('orphanCount').textContent = o.orphans.length;
+  $('orphanNote').textContent =
+    (o.limited ? '⚠ Crawl dừng ở giới hạn URL nên một số trang có thể chưa được khám phá — danh sách dưới đây có thể chưa chắc chắn 100%. ' : '') +
+    'Nguồn sitemap: ' + (o.sitemaps.join(', ') || 'không tìm thấy') + ` (${o.sitemap_count} URL trong sitemap).`;
+  $('orphanBody').innerHTML = o.orphans.map(u =>
+    `<tr><td class="url-cell" style="max-width:900px"><a href="${esc(u)}" target="_blank">${esc(u)}</a></td></tr>`).join('');
+}
+
+// ---------- Lọc + bảng ----------
+['filterType', 'filterIssue'].forEach(id => $(id).onchange = renderTable);
+$('searchBox').oninput = () => { clearTimeout(window._st); window._st = setTimeout(renderTable, 250); };
+
+function hasIssue(r, issue) {
+  switch (issue) {
+    case 'error': return typeof r.status !== 'number' || r.status >= 400;
+    case 'redirect': return r.redirect_chain && r.redirect_chain.length > 0;
+    case 'no_title': return r.status === 200 && !r.title;
+    case 'dup_title': return r.title && dupTitles.has(r.title);
+    case 'no_meta': return r.status === 200 && !r.meta_description;
+    case 'dup_meta': return r.meta_description && dupMetas.has(r.meta_description);
+    case 'no_h1': return r.status === 200 && r.h1_count === 0;
+    case 'multi_h1': return r.h1_count > 1;
+    case 'canonical': return r.status === 200 && r.canonical_ok === false;
+    case 'noindex': return r.noindex;
+    case 'missing_alt': return r.images_missing_alt > 0;
+    case 'thin': return r.status === 200 && (r.word_count || 0) < 150;
+    case 'no_inlinks': return r.status === 200 && !(r.inlink_count > 0);
+    default: return true;
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function statusCell(r) {
+  if (typeof r.status !== 'number') return `<span class="st-bad">${esc(r.status || '?')}</span>`;
+  const cls = r.status >= 400 ? 'st-bad' : (r.redirect_chain && r.redirect_chain.length ? 'st-redirect' : 'st-ok');
+  return `<span class="${cls}">${r.status}</span>`;
+}
+
+function renderTable() {
+  const type = $('filterType').value, issue = $('filterIssue').value,
+        q = $('searchBox').value.trim().toLowerCase();
+  const rows = [];
+  let shown = 0;
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (type && r.page_type !== type) continue;
+    if (issue && !hasIssue(r, issue)) continue;
+    if (q && !(r.url.toLowerCase().includes(q) || (r.title || '').toLowerCase().includes(q))) continue;
+    shown++;
+    const titleFlag = r.status === 200 && !r.title ? '<span class="flag">Thiếu!</span>'
+      : (r.title && dupTitles.has(r.title) ? ` <span class="flag">(trùng)</span>` : '');
+    const canonCell = r.status !== 200 ? '—'
+      : (r.canonical_ok ? '<span class="okmark">✓</span>' : '<span class="flag">✗</span>');
+    const h1Cell = r.status !== 200 ? '—'
+      : (r.h1_count === 1 ? '1' : `<span class="flag">${r.h1_count}</span>`);
+    rows.push(`<tr class="data-row" data-i="${i}">
+      <td class="url-cell" title="${esc(r.url)}"><a href="${esc(r.url)}" target="_blank" onclick="event.stopPropagation()">${esc(r.url)}</a></td>
+      <td><span class="pill pill-${r.page_type}">${esc(r.page_type_label)}</span></td>
+      <td>${r.folder_depth ?? ''}</td>
+      <td>${statusCell(r)}</td>
+      <td>${esc((r.title || '').slice(0, 70))} <small style="color:var(--muted)">(${r.title_length})</small>${titleFlag}</td>
+      <td>${r.status === 200 ? (r.meta_description ? r.meta_desc_length : '<span class="flag">Thiếu</span>') : '—'}</td>
+      <td>${h1Cell}</td>
+      <td>${r.status === 200 ? r.h2_count : '—'}</td>
+      <td>${canonCell}</td>
+      <td>${r.image_count}${r.images_missing_alt ? ` <span class="flag">(${r.images_missing_alt} thiếu alt)</span>` : ''}</td>
+      <td>${r.status === 200 ? ((r.word_count || 0) < 150 ? `<span class="flag">${r.word_count || 0}</span>` : r.word_count) : '—'}</td>
+      <td>${r.inlink_count > 0 ? r.inlink_count : '<span class="flag">0</span>'}</td>
+      <td>${esc(r.date_published) || '<span style="color:var(--muted)">—</span>'}</td>
+      <td>${esc(r.date_modified) || '<span style="color:var(--muted)">—</span>'}</td>
+    </tr>`);
+  }
+  $('tbody').innerHTML = rows.join('');
+  $('countNote').textContent = `Hiển thị ${shown}/${records.length} URL — bấm vào dòng để xem chi tiết`;
+}
+
+// ---------- Chi tiết dòng ----------
+$('tbody').onclick = e => {
+  const tr = e.target.closest('tr.data-row');
+  if (!tr) return;
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains('detail-row')) { existing.remove(); return; }
+  document.querySelectorAll('.detail-row').forEach(x => x.remove());
+  const r = records[parseInt(tr.dataset.i)];
+  const imgs = (r.images || []).map(im =>
+    `<tr><td class="url-cell" style="max-width:420px"><a href="${esc(im.src)}" target="_blank">${esc(im.src)}</a></td>
+     <td>${im.missing_alt ? '<span class="flag">Thiếu alt</span>' : esc(im.alt)}</td></tr>`).join('');
+  const detail = document.createElement('tr');
+  detail.className = 'detail-row';
+  const inl = (r.inlink_sources || []).map(s =>
+    `<tr><td class="url-cell" style="max-width:420px"><a href="${esc(s.from)}" target="_blank">${esc(s.from)}</a></td>
+     <td>${esc(s.anchor) || '<span style="color:var(--muted)">(không có anchor)</span>'}</td></tr>`).join('');
+  detail.innerHTML = `<td colspan="14">
+    <dl class="detail-grid">
+      <dt>Cây thư mục</dt><dd>${(r.path_segments || []).map(esc).join(' › ') || '(trang chủ)'}</dd>
+      <dt>URL cuối (sau redirect)</dt><dd>${esc(r.final_url)}</dd>
+      ${r.redirect_chain && r.redirect_chain.length ? `<dt>Chuỗi redirect</dt><dd>${esc(r.redirect_chain.join(' ; '))}</dd>` : ''}
+      <dt>Title</dt><dd>${esc(r.title) || '<span class="flag">Thiếu</span>'}</dd>
+      <dt>Meta description</dt><dd>${esc(r.meta_description) || '<span class="flag">Thiếu</span>'}</dd>
+      <dt>H1 (${r.h1_count})</dt><dd>${esc((r.h1_texts || []).join(' | ')) || '—'}</dd>
+      <dt>Canonical</dt><dd>${esc(r.canonical) || '<span class="flag">Không có thẻ canonical</span>'}</dd>
+      <dt>Meta robots</dt><dd>${esc(r.meta_robots) || '(không khai báo)'}${r.noindex ? ' <span class="flag">NOINDEX!</span>' : ''}</dd>
+      <dt>Thumbnail (og:image)</dt><dd>${r.og_image ? `<a href="${esc(r.og_image)}" target="_blank">${esc(r.og_image)}</a>` : '<span class="flag">Không có</span>'}</dd>
+      <dt>Độ sâu / Tìm thấy tại</dt><dd>Depth ${r.depth} — ${esc(r.found_on)}</dd>
+      <dt>Ngày đăng / Cập nhật</dt><dd>${esc(r.date_published) || '(không khai báo)'} / ${esc(r.date_modified) || '(không khai báo)'}${r.date_source ? ` <small style="color:var(--muted)">— nguồn: ${esc(r.date_source)}</small>` : ''}</dd>
+      <dt>Số từ / Inlinks</dt><dd>${r.word_count ?? '—'} từ${r.status === 200 && (r.word_count || 0) < 150 ? ' <span class="flag">(thin content)</span>' : ''} — ${r.inlink_count || 0} liên kết nội bộ trỏ tới</dd>
+      <dt>Phản hồi</dt><dd>${r.response_ms != null ? r.response_ms + ' ms' : '—'}${r.error ? ' — <span class="flag">' + esc(r.error) + '</span>' : ''}</dd>
+    </dl>
+    ${inl ? `<strong style="font-size:12px">Liên kết nội bộ trỏ tới trang này (${r.inlink_count}${r.inlink_count > 30 ? ', hiện 30 mẫu' : ''}):</strong>
+    <div class="img-list"><table><thead><tr><th>Từ trang</th><th>Anchor text</th></tr></thead><tbody>${inl}</tbody></table></div>` : ''}
+    ${imgs ? `<strong style="font-size:12px">Hình ảnh trong trang (${r.image_count}):</strong>
+    <div class="img-list"><table><thead><tr><th>URL ảnh</th><th>Alt</th></tr></thead><tbody>${imgs}</tbody></table></div>` : ''}
+  </td>`;
+  tr.after(detail);
+};
+</script>
+</body>
+</html>
