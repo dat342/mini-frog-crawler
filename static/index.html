@@ -188,6 +188,10 @@ td.url-cell a:hover{text-decoration:underline}
         <input type="checkbox" id="respectRobots" checked>
         <label for="respectRobots" style="margin:0">Tôn trọng robots.txt (khuyến nghị bật)</label>
       </div>
+      <div class="checkline">
+        <input type="checkbox" id="useWayback">
+        <label for="useWayback" style="margin:0">Tra Wayback Machine (web.archive.org) cho trang thiếu ngày đăng/cập nhật — chậm hơn, tối đa 100 trang/lần</label>
+      </div>
     </details>
   </div>
 
@@ -319,6 +323,7 @@ $('startBtn').onclick = async () => {
     max_urls: parseInt($('maxUrls').value) || 1000,
     concurrency: parseInt($('concurrency').value) || 5,
     respect_robots: $('respectRobots').checked,
+    use_wayback: $('useWayback').checked,
     exclude: $('excludeArea').value.split('\n').map(s => s.trim()).filter(Boolean),
     patterns: {
       category: $('patCategory').value.split('\n').map(s => s.trim()).filter(Boolean),
@@ -402,7 +407,9 @@ function updateProgress(st) {
   $('cProduct').textContent = st.by_type.product || 0;
   $('cBlog').textContent = st.by_type.blog || 0;
   $('cOther').textContent = st.by_type.other || 0;
-  $('recentUrl').textContent = st.recent.length ? '→ ' + st.recent[st.recent.length - 1] : '';
+  $('recentUrl').textContent = st.message && st.state === 'running'
+    ? '⏳ ' + st.message
+    : (st.recent.length ? '→ ' + st.recent[st.recent.length - 1] : '');
   const badge = $('stateBadge');
   const map = {running: ['Đang chạy', 'state-running'], done: ['Hoàn tất ✓', 'state-done'],
                stopped: ['Đã dừng', 'state-stopped'], error: ['Lỗi: ' + st.message, 'state-error']};

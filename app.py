@@ -30,6 +30,7 @@ class CrawlRequest(BaseModel):
     patterns: dict = {}
     exclude: list = []
     respect_robots: bool = True
+    use_wayback: bool = False
     concurrency: int = 5
     delay: float = 0.2
 

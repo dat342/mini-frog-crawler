@@ -153,6 +153,7 @@ class CrawlJob:
         self.concurrency = min(int(config.get("concurrency", 5) or 5), 10)
         self.delay = max(float(config.get("delay", 0.2) or 0.2), 0.05)
         self.respect_robots = bool(config.get("respect_robots", True))
+        self.use_wayback = bool(config.get("use_wayback", False))
 
         patterns = {**DEFAULT_PATTERNS}
         for key in ("category", "product", "blog"):
@@ -581,6 +582,64 @@ class CrawlJob:
         if self.sitemap_urls:
             self.orphan_urls = sorted(self.sitemap_urls - self.seen)[:1000]
 
+    async def _lookup_wayback(self, client: httpx.AsyncClient):
+        """Tra Internet Archive (Wayback Machine) cho các trang thiếu ngày.
+
+        Bản chụp đầu tiên ~ cận trên của ngày đăng (trang tồn tại muộn nhất từ đó).
+        Bản chụp cuối ~ lần cuối archive.org thấy trang. Giới hạn 100 trang/lần.
+        """
+        targets = [
+            r for r in self.records
+            if r.get("status") == 200 and (not r.get("date_published") or not r.get("date_modified"))
+        ][:100]
+        if not targets:
+            return
+        api = "https://web.archive.org/cdx/search/cdx"
+
+        async def first_or_last_snapshot(url, last=False):
+            params = {"url": url, "output": "json", "fl": "timestamp",
+                      "filter": "statuscode:200", "limit": "-1" if last else "1"}
+            # archive.org giới hạn tốc độ rất gắt -> retry với backoff khi bị 429
+            for attempt in range(3):
+                resp = await client.get(api, params=params, timeout=30)
+                if resp.status_code == 429:
+                    await asyncio.sleep(10 * (attempt + 1))
+                    continue
+                if resp.status_code == 200:
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        return None
+                    if len(data) > 1 and data[1]:
+                        ts = data[1][0]
+                        return f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]}"
+                return None
+            return None
+
+        # Gọi TUẦN TỰ, nghỉ 2.5s giữa các request để không bị archive.org chặn
+        for i, r in enumerate(targets):
+            if self._stop:
+                break
+            self.message = f"Đang tra Wayback Machine: {i + 1}/{len(targets)} trang..."
+            try:
+                if not r.get("date_published"):
+                    d = await first_or_last_snapshot(r["url"])
+                    if d:
+                        r["date_published"] = d
+                        src = r.get("date_source")
+                        r["date_source"] = ((src + " + ") if src else "") + "Wayback bản lưu đầu"
+                    await asyncio.sleep(2.5)
+                if not r.get("date_modified"):
+                    d = await first_or_last_snapshot(r["url"], last=True)
+                    if d and d != r.get("date_published"):
+                        r["date_modified"] = d
+                        src = r.get("date_source")
+                        r["date_source"] = ((src + " + ") if src else "") + "Wayback bản lưu cuối"
+                    await asyncio.sleep(2.5)
+            except Exception:
+                pass
+        self.message = ""
+
     def _reclassify_tree(self):
         """Phân tầng theo cây URL: trang 'Sản phẩm' nhưng có trang con bên dưới
         (là thư mục cha của URL khác) thực chất là trang danh mục."""
@@ -620,8 +679,10 @@ class CrawlJob:
                     w.cancel()
                 if self.mode != "list":
                     await self._load_sitemaps(client)
-            self._reclassify_tree()
-            self._attach_inlinks()
+                self._reclassify_tree()
+                self._attach_inlinks()
+                if self.use_wayback:
+                    await self._lookup_wayback(client)
             self.state = "stopped" if self._stop else "done"
         except Exception as e:
             self.state = "error"
