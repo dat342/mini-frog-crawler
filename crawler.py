@@ -48,6 +48,7 @@ SKIP_EXTENSIONS = re.compile(
 TRACKING_PARAMS = {"fbclid", "gclid", "msclkid", "zanpid", "zarsrc", "srsltid", "yclid"}
 
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+VISIBLE_DATE_RE = re.compile(r"\b(\d{1,2}[/-]\d{1,2}[/-]20\d{2}|20\d{2}-\d{2}-\d{2})\b")
 
 
 def clean_date(value):
@@ -434,6 +435,24 @@ class CrawlJob:
                     record["date_modified"] = clean_date(tag[attr])
                     sources.append(f"attr {attr}")
                     break
+        # Dự phòng cuối cùng: ngày dạng text hiển thị ngay sát sau H1
+        # (bidv.com.vn: <i>16/04/2024</i> sau nhãn DangTaiNgay; vpbank.com.vn: <p>04/12/2019</p>)
+        # Chỉ dò 25 phần tử đầu sau H1 để tránh dính ngày của bài liên quan phía dưới.
+        if not record["date_published"]:
+            h1 = soup.find("h1")
+            if h1:
+                for i, el in enumerate(h1.find_all_next(True)):
+                    if i >= 25:
+                        break
+                    if el.name in ("script", "style", "a"):
+                        continue
+                    text = el.get_text(" ", strip=True)
+                    if text and len(text) <= 60:
+                        m = VISIBLE_DATE_RE.search(text)
+                        if m:
+                            record["date_published"] = m.group(0)
+                            sources.append("text gần H1")
+                            break
         if sources:
             record["date_source"] = " + ".join(sources)
 
