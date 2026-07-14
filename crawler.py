@@ -50,6 +50,24 @@ TRACKING_PARAMS = {"fbclid", "gclid", "msclkid", "zanpid", "zarsrc", "srsltid", 
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 VISIBLE_DATE_RE = re.compile(r"\b(\d{1,2}[/-]\d{1,2}[/-]20\d{2}|20\d{2}-\d{2}-\d{2})\b")
 
+# Các meta name khai báo ngày mà site VN hay dùng:
+# - pubdate/publishdate: VnExpress, nhiều báo điện tử
+# - dc.* / dcterms.*: Dublin Core - site .gov.vn, thư viện, đại học
+# - cxenseparse: hệ thống cá nhân hóa cXense của nhiều tòa soạn
+# - sailthru.date: nền tảng email/analytics báo chí
+META_PUB_NAMES = frozenset((
+    "pubdate", "publishdate", "publish-date", "publish_date", "publication_date",
+    "date", "dc.date", "dc.date.issued", "dcterms.date", "dcterms.created",
+    "sailthru.date", "cxenseparse:recs:publishtime", "article:published_time",
+    "og:article:published_time", "datepublished", "creation_date", "ptime",
+))
+META_MOD_NAMES = frozenset((
+    "lastmod", "last-modified", "lastmodified", "revised", "dc.date.modified",
+    "dcterms.modified", "article:modified_time", "datemodified", "updated_time",
+))
+# Nhãn tiếng Việt/Anh để phân biệt ngày đăng vs ngày cập nhật trong text hiển thị
+MOD_LABEL_RE = re.compile(r"cập nhật|cap nhat|updated|sửa đổi|chỉnh sửa|last modified", re.I)
+
 
 def clean_date(value):
     """Rút gọn về dạng YYYY-MM-DD nếu nhận diện được."""
@@ -368,93 +386,7 @@ class CrawlJob:
         if og_image and og_image.get("content"):
             record["og_image"] = urljoin(record["final_url"], og_image["content"].strip())
 
-        # Ngày đăng / ngày cập nhật: meta article:* -> itemprop -> JSON-LD
-        sources = []
-        for prop in ("article:published_time",):
-            tag = soup.find("meta", attrs={"property": prop})
-            if tag and tag.get("content"):
-                record["date_published"] = clean_date(tag["content"])
-                sources.append("meta")
-                break
-        for prop in ("article:modified_time", "og:updated_time"):
-            tag = soup.find("meta", attrs={"property": prop})
-            if tag and tag.get("content"):
-                record["date_modified"] = clean_date(tag["content"])
-                if "meta" not in sources:
-                    sources.append("meta")
-                break
-        # So khớp itemprop có strip() vì nhiều site viết thừa khoảng trắng
-        # (vd techcombank.com: itemprop=" datePublished")
-        if not record["date_published"]:
-            tag = soup.find("meta", attrs={
-                "itemprop": lambda v: v and v.strip().lower() == "datepublished"})
-            if tag and tag.get("content"):
-                record["date_published"] = clean_date(tag["content"])
-                sources.append("itemprop")
-        if not record["date_modified"]:
-            tag = soup.find("meta", attrs={
-                "itemprop": lambda v: v and v.strip().lower() == "datemodified"})
-            if tag and tag.get("content"):
-                record["date_modified"] = clean_date(tag["content"])
-                if "itemprop" not in sources:
-                    sources.append("itemprop")
-        if not record["date_published"] or not record["date_modified"]:
-            found = {}
-            for script in soup.find_all("script", type="application/ld+json"):
-                try:
-                    find_jsonld_dates(json.loads(script.string or ""), found)
-                except Exception:
-                    continue
-                if "datePublished" in found and "dateModified" in found:
-                    break
-            if not record["date_published"] and found.get("datePublished"):
-                record["date_published"] = clean_date(found["datePublished"])
-                sources.append("JSON-LD")
-            if not record["date_modified"] and found.get("dateModified"):
-                record["date_modified"] = clean_date(found["dateModified"])
-                if "JSON-LD" not in sources:
-                    sources.append("JSON-LD")
-        # Dự phòng cuối: thẻ <time datetime> hoặc thuộc tính ngày tùy chỉnh
-        # của CMS (vd vib.com.vn dùng date-created / date-up)
-        if not record["date_published"]:
-            tag = soup.find("time", attrs={"datetime": True})
-            if tag and tag.get("datetime", "").strip():
-                record["date_published"] = clean_date(tag["datetime"])
-                sources.append("thẻ time")
-        if not record["date_published"]:
-            for attr in ("date-created", "data-created", "data-published", "data-date"):
-                tag = soup.find(attrs={attr: True})
-                if tag and tag.get(attr, "").strip():
-                    record["date_published"] = clean_date(tag[attr])
-                    sources.append(f"attr {attr}")
-                    break
-        if not record["date_modified"]:
-            for attr in ("date-up", "date-updated", "data-updated", "data-modified"):
-                tag = soup.find(attrs={attr: True})
-                if tag and tag.get(attr, "").strip():
-                    record["date_modified"] = clean_date(tag[attr])
-                    sources.append(f"attr {attr}")
-                    break
-        # Dự phòng cuối cùng: ngày dạng text hiển thị ngay sát sau H1
-        # (bidv.com.vn: <i>16/04/2024</i> sau nhãn DangTaiNgay; vpbank.com.vn: <p>04/12/2019</p>)
-        # Chỉ dò 25 phần tử đầu sau H1 để tránh dính ngày của bài liên quan phía dưới.
-        if not record["date_published"]:
-            h1 = soup.find("h1")
-            if h1:
-                for i, el in enumerate(h1.find_all_next(True)):
-                    if i >= 25:
-                        break
-                    if el.name in ("script", "style", "a"):
-                        continue
-                    text = el.get_text(" ", strip=True)
-                    if text and len(text) <= 60:
-                        m = VISIBLE_DATE_RE.search(text)
-                        if m:
-                            record["date_published"] = m.group(0)
-                            sources.append("text gần H1")
-                            break
-        if sources:
-            record["date_source"] = " + ".join(sources)
+        self._extract_dates(soup, record)
 
         h1_texts = [h.get_text(" ", strip=True)[:200] for h in soup.find_all("h1")]
         record["h1_texts"] = h1_texts
@@ -497,6 +429,135 @@ class CrawlJob:
             tag.decompose()
         record["word_count"] = len(soup.get_text(" ", strip=True).split())
         return links
+
+    def _extract_dates(self, soup, record):
+        """Dò ngày đăng / ngày cập nhật qua 7 tầng, tin cậy cao -> thấp.
+
+        1. Meta property Open Graph (article:published_time...) — WordPress, báo chí
+        2. Meta name (pubdate, Dublin Core, cXense...) — VnExpress, site .gov.vn
+        3. Microdata itemprop (strip khoảng trắng thừa — techcombank)
+        4. Schema JSON-LD — site làm SEO tốt
+        5. Thẻ <time datetime> có phân biệt nhãn "Cập nhật" — dantri, tuoitre...
+        6. Thuộc tính CMS tùy chỉnh (date-created...) — vib
+        7. Ngày dạng text quanh H1 (có nhãn cập nhật/đăng) — bidv, vpbank
+        """
+        sources = []
+
+        def set_pub(value, src):
+            if value and not record["date_published"]:
+                record["date_published"] = clean_date(value)
+                if src not in sources:
+                    sources.append(src)
+
+        def set_mod(value, src):
+            if value and not record["date_modified"]:
+                record["date_modified"] = clean_date(value)
+                if src not in sources:
+                    sources.append(src)
+
+        # Tầng 1: meta property (Open Graph)
+        tag = soup.find("meta", attrs={"property": "article:published_time"})
+        if tag:
+            set_pub(tag.get("content"), "meta")
+        for prop in ("article:modified_time", "og:updated_time"):
+            tag = soup.find("meta", attrs={"property": prop})
+            if tag:
+                set_mod(tag.get("content"), "meta")
+
+        # Tầng 2: meta name (pubdate, Dublin Core dc.*, cXense... — báo chí, site .gov)
+        if not record["date_published"]:
+            tag = soup.find("meta", attrs={
+                "name": lambda v: v and v.strip().lower() in META_PUB_NAMES})
+            if tag:
+                set_pub(tag.get("content"), f"meta {(tag.get('name') or '').strip()}")
+        if not record["date_modified"]:
+            tag = soup.find("meta", attrs={
+                "name": lambda v: v and v.strip().lower() in META_MOD_NAMES})
+            if tag:
+                set_mod(tag.get("content"), f"meta {(tag.get('name') or '').strip()}")
+
+        # Tầng 3: itemprop — nhận mọi thẻ (meta/time/span), strip khoảng trắng thừa
+        if not record["date_published"]:
+            tag = soup.find(attrs={
+                "itemprop": lambda v: v and v.strip().lower() == "datepublished"})
+            if tag:
+                set_pub(tag.get("content") or tag.get("datetime")
+                        or tag.get_text(" ", strip=True)[:40], "itemprop")
+        if not record["date_modified"]:
+            tag = soup.find(attrs={
+                "itemprop": lambda v: v and v.strip().lower() == "datemodified"})
+            if tag:
+                set_mod(tag.get("content") or tag.get("datetime")
+                        or tag.get_text(" ", strip=True)[:40], "itemprop")
+
+        # Tầng 4: Schema JSON-LD
+        if not record["date_published"] or not record["date_modified"]:
+            found = {}
+            for script in soup.find_all("script", type="application/ld+json"):
+                try:
+                    find_jsonld_dates(json.loads(script.string or ""), found)
+                except Exception:
+                    continue
+                if "datePublished" in found and "dateModified" in found:
+                    break
+            set_pub(found.get("datePublished"), "JSON-LD")
+            set_mod(found.get("dateModified"), "JSON-LD")
+
+        # Tầng 5: thẻ <time datetime> — nhãn chứa "cập nhật/updated" thì là ngày sửa
+        if not record["date_published"] or not record["date_modified"]:
+            for t in soup.find_all("time", attrs={"datetime": True})[:5]:
+                dt = (t.get("datetime") or "").strip()
+                if not dt:
+                    continue
+                context = t.get_text(" ", strip=True)
+                if t.parent:
+                    context += " " + t.parent.get_text(" ", strip=True)[:80]
+                if MOD_LABEL_RE.search(context):
+                    set_mod(dt, "thẻ time")
+                else:
+                    set_pub(dt, "thẻ time")
+
+        # Tầng 6: thuộc tính CMS tùy chỉnh (vib.com.vn: date-created / date-up)
+        if not record["date_published"]:
+            for attr in ("date-created", "data-created", "data-published",
+                         "data-date", "data-publish-date"):
+                tag = soup.find(attrs={attr: True})
+                if tag and tag.get(attr, "").strip():
+                    set_pub(tag[attr], f"attr {attr}")
+                    break
+        if not record["date_modified"]:
+            for attr in ("date-up", "date-updated", "data-updated", "data-modified"):
+                tag = soup.find(attrs={attr: True})
+                if tag and tag.get(attr, "").strip():
+                    set_mod(tag[attr], f"attr {attr}")
+                    break
+
+        # Tầng 7: ngày dạng text hiển thị quanh H1 (bidv: <i>16/04/2024</i>,
+        # vpbank: <p>04/12/2019</p>, vnexpress: "Thứ năm, 4/7/2024, 06:00 (GMT+7)")
+        # Nhãn "Cập nhật..." -> ngày sửa; còn lại -> ngày đăng.
+        if not record["date_published"] or not record["date_modified"]:
+            h1 = soup.find("h1")
+            if h1:
+                candidates = list(h1.find_all_next(True))[:25]
+                candidates += list(h1.find_all_previous(True))[:10]
+                for el in candidates:
+                    if el.name in ("script", "style", "a", "img", "nav", "header"):
+                        continue
+                    text = el.get_text(" ", strip=True)
+                    if not text or len(text) > 90:
+                        continue
+                    m = VISIBLE_DATE_RE.search(text)
+                    if not m:
+                        continue
+                    if MOD_LABEL_RE.search(text):
+                        set_mod(m.group(0), "text gần H1")
+                    else:
+                        set_pub(m.group(0), "text gần H1")
+                    if record["date_published"] and record["date_modified"]:
+                        break
+
+        if sources:
+            record["date_source"] = " + ".join(sources)
 
     async def _worker(self, queue: asyncio.PriorityQueue, client: httpx.AsyncClient):
         while True:
