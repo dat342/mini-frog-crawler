@@ -607,16 +607,38 @@ class CrawlJob:
                     r["date_source"] = (src + " + sitemap") if src else "sitemap"
 
     async def _load_sitemaps(self, client: httpx.AsyncClient):
-        """Đọc sitemap.xml (kể cả sitemap index) để đối chiếu tìm orphan pages."""
+        """Đọc sitemap của mọi domain trong seeds (list mode dán được nhiều domain).
+
+        Mục đích: đối chiếu orphan pages (chế độ auto/seeds) và lấy <lastmod>
+        làm nguồn dự phòng cho ngày cập nhật (mọi chế độ, kể cả list).
+        """
+        origins, seen_hosts = [], set()
+        for s in self.seeds:
+            p = urlparse(s)
+            if p.netloc and p.netloc not in seen_hosts:
+                seen_hosts.add(p.netloc)
+                origins.append((f"{p.scheme}://{p.netloc}", strip_www(p.hostname or "")))
+            if len(origins) >= 5:  # giới hạn 5 domain/lần
+                break
+        for base, root_host in origins:
+            await self._load_sitemaps_origin(client, base, root_host)
+        # Orphan = có trong sitemap nhưng crawler không hề gặp qua link nội bộ.
+        # List mode không tính orphan (chỉ quét URL được dán nên so sánh vô nghĩa).
+        if self.sitemap_urls and self.mode != "list":
+            self.orphan_urls = sorted(self.sitemap_urls - self.seen)[:1000]
+
+    async def _load_sitemaps_origin(self, client: httpx.AsyncClient, base: str, root_host: str):
         candidates = []
-        if self._robots is not None:
-            try:
-                candidates.extend(self._robots.site_maps() or [])
-            except Exception:
-                pass
-        parsed = urlparse(self.seeds[0])
-        base = f"{parsed.scheme}://{parsed.netloc}"
+        try:
+            resp = await client.get(base + "/robots.txt", timeout=10)
+            if resp.status_code == 200:
+                candidates.extend(re.findall(r"(?im)^\s*sitemap:\s*(\S+)", resp.text))
+        except Exception:
+            pass
         candidates.extend([base + "/sitemap.xml", base + "/sitemap_index.xml"])
+
+        def same_origin(url):
+            return strip_www(urlparse(url).hostname or "") == root_host
 
         fetched = set()
         pending = [c for c in candidates if c]
@@ -646,7 +668,7 @@ class CrawlJob:
                             if not locm:
                                 continue
                             n = normalize_url(locm.group(1), locm.group(1))
-                            if n and self._same_site(n):
+                            if n and same_origin(n):
                                 self.sitemap_urls.add(n)
                                 lastmod = re.search(r"<lastmod>\s*(.*?)\s*</lastmod>", block, re.I | re.S)
                                 if lastmod:
@@ -654,13 +676,10 @@ class CrawlJob:
                     else:
                         for loc in locs:
                             n = normalize_url(loc, loc)
-                            if n and self._same_site(n):
+                            if n and same_origin(n):
                                 self.sitemap_urls.add(n)
             except Exception:
                 continue
-        # Orphan = có trong sitemap nhưng crawler không hề gặp qua link nội bộ
-        if self.sitemap_urls:
-            self.orphan_urls = sorted(self.sitemap_urls - self.seen)[:1000]
 
     async def _lookup_wayback(self, client: httpx.AsyncClient):
         """Tra Internet Archive (Wayback Machine) cho các trang thiếu ngày.
@@ -757,8 +776,7 @@ class CrawlJob:
                 await queue.join()
                 for w in workers:
                     w.cancel()
-                if self.mode != "list":
-                    await self._load_sitemaps(client)
+                await self._load_sitemaps(client)
                 self._reclassify_tree()
                 self._attach_inlinks()
                 if self.use_wayback:
