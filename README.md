@@ -83,13 +83,14 @@ git clone https://github.com/dat342/mini-frog-crawler.git
 
 ## 🚀 Cách dùng
 
-### 3 chế độ crawl
+### 4 chế độ
 
 | Chế độ | Dùng khi nào |
 |---|---|
 | 🌐 **Tự động từ trang chủ** | Nhập 1 domain, tool tự crawl theo ưu tiên: Trang chủ → Danh mục/Dịch vụ → Sản phẩm → Blog (mặc định 1.000 URL) |
 | 📂 **Theo thư mục mẹ** | Dán URL thư mục (vd `site.com/may-giat/`), tool chỉ cào URL con bên trong |
 | 📋 **Chỉ đúng URL tôi dán** | Dán danh sách URL (copy từ Excel/GSC), tool quét đúng các URL đó, không lần theo link — dán được nhiều domain |
+| 🧭 **Tái tạo URL & phân loại** | Chức năng riêng cho URL phẳng (không có category trong URL). Đọc breadcrumb/schema/WordPress API để suy ra category, tái tạo thành `domain/%category%/%post%` và phân loại trang. Không bóc SEO — chỉ 2 việc này. Nguồn ưu tiên: Schema breadcrumb → Breadcrumb HTML → article:section → WordPress REST API |
 
 ### Dữ liệu thu được trên mỗi URL
 

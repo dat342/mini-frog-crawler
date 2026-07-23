@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Lõi crawler: quét URL theo ưu tiên loại trang, bóc tách dữ liệu SEO on-page."""
 import asyncio
+import html as htmllib
 import json
 import re
 import time
@@ -163,11 +164,57 @@ def compute_duplicates(records: list) -> dict:
     }
 
 
+# ===== Tái tạo URL %category%/%post% từ breadcrumb (chế độ reconstruct) =====
+
+GENERIC_CRUMBS = {
+    "trang chủ", "trang chu", "home", "homepage", "trang chính", "trang chinh", "#", "",
+}
+_ACCENT_PAIRS = [
+    ("àáảãạăằắẳẵặâầấẩẫậ", "a"), ("èéẻẽẹêềếểễệ", "e"), ("ìíỉĩị", "i"),
+    ("òóỏõọôồốổỗộơờớởỡợ", "o"), ("ùúủũụưừứửữự", "u"), ("ỳýỷỹỵ", "y"), ("đ", "d"),
+]
+
+
+def slugify_vn(text: str) -> str:
+    """Chuyển tên category tiếng Việt thành slug: 'Dinh dưỡng mẹ' -> 'dinh-duong-me'."""
+    text = htmllib.unescape(text or "").strip().lower().replace("#", "")
+    for chars, repl in _ACCENT_PAIRS:
+        for ch in chars:
+            text = text.replace(ch, repl)
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+
+
+def clean_breadcrumb(names, domain: str, title: str) -> list:
+    """Làm sạch chuỗi breadcrumb: bỏ đoạn rỗng/generic/trùng, bỏ tên site đầu và tiêu đề cuối."""
+    out = []
+    for n in names:
+        n = htmllib.unescape((n or "").strip()).lstrip("#").strip()
+        if not n or n.lower() in GENERIC_CRUMBS:
+            continue
+        if out and out[-1].lower() == n.lower():
+            continue
+        out.append(n)
+    # Bỏ phần tử đầu nếu là tên site (slug gần trùng domain) — vd "Thế Giới Di Động"
+    if out:
+        dom = domain.replace("www.", "").split(".")[0].replace("-", "")
+        first = slugify_vn(out[0]).replace("-", "")
+        if first and (first in dom or dom in first):
+            out = out[1:]
+    # Bỏ phần tử cuối nếu trùng tiêu đề bài (nó là title chứ không phải category)
+    if len(out) >= 2 and title:
+        ts = slugify_vn(title)
+        last = slugify_vn(out[-1])
+        if last and ts and (last in ts or ts in last or ts[:25] == last[:25]):
+            out = out[:-1]
+    return out
+
+
 class CrawlJob:
     """Một phiên crawl. Chạy bằng asyncio, kết quả gom vào self.records."""
 
     def __init__(self, config: dict):
-        self.mode = config.get("mode", "auto")  # auto | seeds | list
+        self.mode = config.get("mode", "auto")  # auto | seeds | list | reconstruct
+        self.use_wp_api = bool(config.get("use_wp_api", True))
         self.max_urls = min(int(config.get("max_urls", 1000) or 1000), 5000)
         self.concurrency = min(int(config.get("concurrency", 5) or 5), 10)
         self.delay = max(float(config.get("delay", 0.2) or 0.2), 0.05)
@@ -193,7 +240,7 @@ class CrawlJob:
                 self.exclude_patterns.append(re.compile(re.escape(pat), re.I))
 
         raw_seeds = []
-        if self.mode in ("seeds", "list"):
+        if self.mode in ("seeds", "list", "reconstruct"):
             raw_seeds = [s for s in config.get("seeds", []) if s.strip()]
         else:
             raw_seeds = [config.get("url", "")]
@@ -209,9 +256,10 @@ class CrawlJob:
             raise ValueError("Không có URL hợp lệ để bắt đầu")
         self.seeds = seeds
         self.root_host = strip_www(urlparse(seeds[0]).hostname or "")
-        # Chế độ list: chỉ quét đúng danh sách, giới hạn = số URL đã dán
-        if self.mode == "list":
+        # Chế độ list/reconstruct: chỉ xử lý đúng danh sách, giới hạn = số URL đã dán
+        if self.mode in ("list", "reconstruct"):
             self.max_urls = len(seeds)
+        self._wp_cat_cache = {}  # (host, cat_id) -> {"name","slug","parent"}
         # Chế độ seeds: chỉ crawl URL con nằm trong các thư mục mẹ đã khai báo
         self.seed_paths = [urlparse(s).path or "/" for s in seeds] if self.mode == "seeds" else []
 
@@ -755,6 +803,185 @@ class CrawlJob:
                 r["page_type"] = "category"
                 r["page_type_label"] = PAGE_TYPE_LABELS["category"]
 
+    # ===== Chế độ RECONSTRUCT: chỉ tái tạo URL %category%/%post% + phân loại =====
+
+    def _extract_breadcrumb(self, soup, url, title):
+        """Trích chuỗi category. Trả về (trail[list], nguồn). Ưu tiên schema -> HTML -> section."""
+        domain = urlparse(url).netloc
+        # 1. Schema BreadcrumbList (JSON-LD) — sạch và tin cậy nhất
+        for s in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(s.string or "")
+            except Exception:
+                continue
+            stack = [data]
+            while stack:
+                o = stack.pop()
+                if isinstance(o, dict):
+                    if o.get("@type") == "BreadcrumbList":
+                        items = sorted(
+                            o.get("itemListElement", []),
+                            key=lambda x: x.get("position", 0) if isinstance(x, dict) else 0)
+                        names = []
+                        for it in items:
+                            nm = it.get("name")
+                            if not nm and isinstance(it.get("item"), dict):
+                                nm = it["item"].get("name")
+                            if nm:
+                                names.append(nm)
+                        trail = clean_breadcrumb(names, domain, title)
+                        if trail:
+                            return trail, "schema"
+                    stack.extend(o.values())
+                elif isinstance(o, list):
+                    stack.extend(o)
+        # 2. Breadcrumb HTML — chỉ lấy <a> để tránh nhân đôi
+        for bc in soup.find_all(class_=re.compile(r"breadcrumb|crumb", re.I)):
+            parts = [a.get_text(" ", strip=True) for a in bc.find_all("a")]
+            trail = clean_breadcrumb(parts, domain, title)
+            if trail:
+                return trail, "HTML breadcrumb"
+        # 3. meta article:section
+        m = soup.find("meta", attrs={"property": "article:section"})
+        if m and m.get("content"):
+            trail = clean_breadcrumb([m["content"]], domain, title)
+            if trail:
+                return trail, "article:section"
+        return [], None
+
+    async def _wp_breadcrumb(self, client, url):
+        """Dự phòng cho site WordPress: lấy category qua REST API /wp-json."""
+        parsed = urlparse(url)
+        host = parsed.netloc
+        slug = parsed.path.strip("/").split("/")[-1]
+        if not slug:
+            return [], None
+        base = f"{parsed.scheme}://{host}"
+        try:
+            resp = await client.get(
+                f"{base}/wp-json/wp/v2/posts",
+                params={"slug": slug, "_fields": "categories"}, timeout=15)
+            if resp.status_code != 200:
+                return [], None
+            posts = resp.json()
+            if not posts or not isinstance(posts, list):
+                return [], None
+            cat_ids = posts[0].get("categories") or []
+            if not cat_ids:
+                return [], None
+            # Lần theo chuỗi cha để dựng đúng thứ tự category (cha -> con)
+            cat_id = cat_ids[0]
+            chain = []
+            for _ in range(5):
+                key = (host, cat_id)
+                if key not in self._wp_cat_cache:
+                    r2 = await client.get(
+                        f"{base}/wp-json/wp/v2/categories/{cat_id}",
+                        params={"_fields": "name,slug,parent"}, timeout=15)
+                    if r2.status_code != 200:
+                        break
+                    self._wp_cat_cache[key] = r2.json()
+                info = self._wp_cat_cache[key]
+                if not info or not info.get("name"):
+                    break
+                chain.insert(0, info["name"])
+                parent = info.get("parent") or 0
+                if not parent:
+                    break
+                cat_id = parent
+            if chain:
+                return chain, "WordPress API"
+        except Exception:
+            pass
+        return [], None
+
+    def _classify_page(self, url, trail):
+        """Phân loại trang từ breadcrumb + URL. Trả về (key, label)."""
+        p = urlparse(url)
+        path = p.path.strip("/")
+        blob = (" ".join(trail) + " " + url).lower()
+        if not path:
+            return "homepage", PAGE_TYPE_LABELS["homepage"]
+        blog_kw = ("tin tức", "tin tuc", "/tin-tuc", "blog", "bài viết", "bai viet",
+                   "news", "kinh nghiệm", "kinh nghiem", "cẩm nang", "cam nang",
+                   "tư vấn", "tu van", "review", "thủ thuật", "thu thuat", "góc",
+                   "chia sẻ", "chia se", "sức khỏe", "suc khoe")
+        prod_kw = ("sản phẩm", "san pham", "/san-pham", "product", "/collections/",
+                   "/products/", "/p/", "/dat-mua")
+        if any(k in blob for k in prod_kw):
+            return "product", PAGE_TYPE_LABELS["product"]
+        if any(k in blob for k in blog_kw):
+            return "blog", PAGE_TYPE_LABELS["blog"]
+        # Có category + slug bài dài (nhiều từ hoặc có ID số) => trang chi tiết/bài viết
+        last_seg = path.split("/")[-1]
+        looks_article = last_seg.count("-") >= 3 or bool(re.search(r"-\d{4,}", last_seg))
+        if trail and looks_article:
+            return "blog", PAGE_TYPE_LABELS["blog"]
+        if len(trail) <= 1:
+            return "category", PAGE_TYPE_LABELS["category"]
+        return "other", PAGE_TYPE_LABELS["other"]
+
+    def _reconstruct_url(self, url, trail):
+        """Ghép domain/%category%/%post% từ trail category + slug bài."""
+        p = urlparse(url)
+        slug = p.path.strip("/").split("/")[-1] or ""
+        cat_slugs = [slugify_vn(c) for c in trail if slugify_vn(c)]
+        if not cat_slugs:
+            return None
+        tail = f"/{slug}" if slug else ""
+        return f"{p.netloc}/" + "/".join(cat_slugs) + tail
+
+    async def _reconstruct_one(self, client, url):
+        record = {
+            "url": url, "status": None, "title": None,
+            "page_type": "other", "page_type_label": PAGE_TYPE_LABELS["other"],
+            "path_segments": [s for s in urlparse(url).path.split("/") if s],
+            "folder_depth": len([s for s in urlparse(url).path.split("/") if s]),
+            "breadcrumb": [], "breadcrumb_source": None,
+            "reconstructed_url": None, "is_wordpress": False, "error": None,
+        }
+        try:
+            resp = await client.get(url)
+            record["status"] = resp.status_code
+            record["final_url"] = str(resp.url)
+            ct = resp.headers.get("content-type", "")
+            if resp.status_code == 200 and "text/html" in ct and len(resp.text) < 3_000_000:
+                soup = BeautifulSoup(resp.text, "lxml")
+                h1 = soup.find("h1")
+                title = (h1.get_text(" ", strip=True) if h1
+                         else (soup.title.string if soup.title else "")) or ""
+                record["title"] = title.strip()[:200]
+                record["is_wordpress"] = ("wp-content" in resp.text or "/wp-json" in resp.text)
+                trail, src = self._extract_breadcrumb(soup, str(resp.url), title)
+                # Dự phòng WordPress API khi không có breadcrumb trong HTML
+                if not trail and self.use_wp_api and record["is_wordpress"]:
+                    trail, src = await self._wp_breadcrumb(client, str(resp.url))
+                record["breadcrumb"] = trail
+                record["breadcrumb_source"] = src
+                record["reconstructed_url"] = self._reconstruct_url(str(resp.url), trail)
+                key, label = self._classify_page(str(resp.url), trail)
+                record["page_type"], record["page_type_label"] = key, label
+        except httpx.HTTPError as e:
+            record["status"] = "Lỗi"
+            record["error"] = f"{type(e).__name__}: {e}"
+        except Exception as e:
+            record["status"] = "Lỗi"
+            record["error"] = f"{type(e).__name__}: {e}"
+        return record
+
+    async def _run_reconstruct(self, client):
+        sem = asyncio.Semaphore(self.concurrency)
+
+        async def process(i, url):
+            async with sem:
+                if self._stop:
+                    return
+                rec = await self._reconstruct_one(client, url)
+                self.records.append(rec)
+                await asyncio.sleep(self.delay)
+
+        await asyncio.gather(*(process(i, u) for i, u in enumerate(self.seeds)))
+
     async def run(self):
         self.state = "running"
         self.started_at = time.time()
@@ -766,6 +993,10 @@ class CrawlJob:
                 timeout=httpx.Timeout(20.0),
                 limits=httpx.Limits(max_connections=self.concurrency + 2),
             ) as client:
+                if self.mode == "reconstruct":
+                    await self._run_reconstruct(client)
+                    self.state = "stopped" if self._stop else "done"
+                    return
                 await self._load_robots(client)
                 for seed in self.seeds:
                     self._enqueue(queue, seed, 0, "(seed)")

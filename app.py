@@ -31,6 +31,7 @@ class CrawlRequest(BaseModel):
     exclude: list = []
     respect_robots: bool = True
     use_wayback: bool = False
+    use_wp_api: bool = True
     concurrency: int = 5
     delay: float = 0.2
 
@@ -301,6 +302,46 @@ async def export_xlsx():
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="crawl-{host}.xlsx"'},
+    )
+
+
+RECON_COLUMNS = [
+    ("URL gốc", "url", 55),
+    ("Loại trang", "page_type_label", 20),
+    ("Breadcrumb (category)", "_breadcrumb", 40),
+    ("URL tái tạo (category/post)", "reconstructed_url", 60),
+    ("Nguồn", "breadcrumb_source", 16),
+    ("Tiêu đề", "title", 45),
+    ("Status", "status", 8),
+    ("Lỗi", "error", 25),
+]
+
+
+@app.get("/api/export/reconstruct.xlsx")
+async def export_reconstruct_xlsx():
+    if not _job or not _job.records:
+        raise HTTPException(400, "Chưa có dữ liệu để xuất")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tái tạo URL"
+    ws.append([c[0] for c in RECON_COLUMNS])
+    for r in _job.records:
+        row = []
+        for _, key, _w in RECON_COLUMNS:
+            if key == "_breadcrumb":
+                row.append(" › ".join(r.get("breadcrumb") or []))
+            else:
+                v = r.get(key)
+                row.append("" if v is None else v)
+        ws.append(row)
+    _style_header(ws, [c[2] for c in RECON_COLUMNS])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="tai-tao-url.xlsx"'},
     )
 
 

@@ -129,6 +129,7 @@ td.url-cell a:hover{text-decoration:underline}
       <button class="tab active" data-mode="auto">🌐 Tự động từ trang chủ</button>
       <button class="tab" data-mode="seeds">📂 Theo thư mục mẹ tôi chọn</button>
       <button class="tab" data-mode="list">📋 Chỉ đúng URL tôi dán</button>
+      <button class="tab" data-mode="reconstruct">🧭 Tái tạo URL & phân loại</button>
     </div>
 
     <div id="autoInput">
@@ -145,6 +146,16 @@ td.url-cell a:hover{text-decoration:underline}
       <label>Danh sách URL cần quét (mỗi dòng một URL) — <span id="listCount" style="color:var(--secondary)">0 URL</span></label>
       <textarea id="listArea" rows="8" placeholder="https://example.com/san-pham/abc&#10;https://example.com/san-pham/xyz&#10;Tool chỉ quét ĐÚNG các URL này, không lần theo link nào khác. Dán được URL từ nhiều domain."></textarea>
       <p class="hint">Mẹo: copy cột URL từ Excel/Google Sheets rồi dán thẳng vào đây. Giới hạn 5.000 URL.</p>
+    </div>
+
+    <div id="reconInput" style="display:none">
+      <label>Danh sách URL phẳng cần tái tạo (mỗi dòng một URL) — <span id="reconCount" style="color:var(--secondary)">0 URL</span></label>
+      <textarea id="reconArea" rows="8" placeholder="https://ila.edu.vn/trai-nghiem-mua-he-mang-dam-tinh-giao-duc&#10;https://suckhoedoisong.vn/thieu-iod-gay-he-luy...htm&#10;Tool đọc breadcrumb/schema của trang để suy ra category, tái tạo thành domain/category/bài-viết và phân loại trang."></textarea>
+      <p class="hint">Chức năng này CHỈ tái tạo URL dạng %category%/%post% và phân loại trang — không bóc SEO. Nguồn ưu tiên: Schema breadcrumb → Breadcrumb HTML → article:section → WordPress API.</p>
+      <div class="checkline">
+        <input type="checkbox" id="useWpApi" checked>
+        <label for="useWpApi" style="margin:0">Dùng WordPress REST API khi trang không có breadcrumb (chậm hơn chút, phủ tốt hơn cho site WordPress)</label>
+      </div>
     </div>
 
     <div class="row" style="margin-top:14px">
@@ -279,6 +290,33 @@ td.url-cell a:hover{text-decoration:underline}
     </div>
     <p class="count-note" id="countNote"></p>
   </div>
+
+  <!-- Kết quả TÁI TẠO URL (chế độ reconstruct) -->
+  <div class="card" id="reconCard" style="display:none">
+    <div class="toolbar">
+      <select id="reconFilterType">
+        <option value="">Tất cả loại trang</option>
+        <option value="homepage">Trang chủ</option>
+        <option value="category">Danh mục / Dịch vụ</option>
+        <option value="product">Sản phẩm</option>
+        <option value="blog">Blog / Tin tức</option>
+        <option value="other">Khác</option>
+      </select>
+      <input type="text" id="reconSearch" placeholder="🔍 Tìm theo URL...">
+      <span class="spacer"></span>
+      <a class="btn btn-accent" href="/api/export/reconstruct.xlsx" download>⬇ Excel</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>URL gốc</th><th>Loại trang</th><th>Breadcrumb (category)</th>
+          <th>URL tái tạo (category/post)</th><th>Nguồn</th><th>Status</th>
+        </tr></thead>
+        <tbody id="reconBody"></tbody>
+      </table>
+    </div>
+    <p class="count-note" id="reconNote"></p>
+  </div>
 </div>
 
 <script>
@@ -303,8 +341,12 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   $('autoInput').style.display = mode === 'auto' ? '' : 'none';
   $('seedsInput').style.display = mode === 'seeds' ? '' : 'none';
   $('listInput').style.display = mode === 'list' ? '' : 'none';
-  // Chế độ list: giới hạn = số URL đã dán nên ẩn ô giới hạn
-  $('maxUrls').parentElement.style.display = mode === 'list' ? 'none' : '';
+  $('reconInput').style.display = mode === 'reconstruct' ? '' : 'none';
+  // list/reconstruct: giới hạn = số URL đã dán nên ẩn ô giới hạn
+  $('maxUrls').parentElement.style.display = (mode === 'list' || mode === 'reconstruct') ? 'none' : '';
+  // reconstruct không dùng pattern/robots/wayback -> ẩn phần nâng cao cho gọn
+  document.querySelector('details.advanced').style.display = mode === 'reconstruct' ? 'none' : '';
+  $('startBtn').textContent = mode === 'reconstruct' ? '▶ Tái tạo URL' : '▶ Bắt đầu crawl';
 });
 
 // Đếm số URL đã dán trong chế độ list
@@ -312,10 +354,14 @@ $('listArea').oninput = () => {
   const n = $('listArea').value.split('\n').filter(s => s.trim()).length;
   $('listCount').textContent = n + ' URL';
 };
+$('reconArea').oninput = () => {
+  const n = $('reconArea').value.split('\n').filter(s => s.trim()).length;
+  $('reconCount').textContent = n + ' URL';
+};
 
 // ---------- Bắt đầu / Dừng ----------
 $('startBtn').onclick = async () => {
-  const seedsSource = mode === 'list' ? 'listArea' : 'seedsArea';
+  const seedsSource = mode === 'list' ? 'listArea' : (mode === 'reconstruct' ? 'reconArea' : 'seedsArea');
   const body = {
     mode,
     url: $('urlInput').value.trim(),
@@ -324,6 +370,7 @@ $('startBtn').onclick = async () => {
     concurrency: parseInt($('concurrency').value) || 5,
     respect_robots: $('respectRobots').checked,
     use_wayback: $('useWayback').checked,
+    use_wp_api: $('useWpApi').checked,
     exclude: $('excludeArea').value.split('\n').map(s => s.trim()).filter(Boolean),
     patterns: {
       category: $('patCategory').value.split('\n').map(s => s.trim()).filter(Boolean),
@@ -334,6 +381,7 @@ $('startBtn').onclick = async () => {
   if (mode === 'auto' && !body.url) { alert('Nhập website cần quét'); return; }
   if (mode === 'seeds' && !body.seeds.length) { alert('Nhập ít nhất 1 URL thư mục mẹ'); return; }
   if (mode === 'list' && !body.seeds.length) { alert('Dán ít nhất 1 URL cần quét'); return; }
+  if (mode === 'reconstruct' && !body.seeds.length) { alert('Dán ít nhất 1 URL để tái tạo'); return; }
 
   const res = await fetch('/api/crawl', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -342,6 +390,7 @@ $('startBtn').onclick = async () => {
 
   records = [];
   $('tbody').innerHTML = '';
+  $('reconBody').innerHTML = '';
   showResultCards();
   $('startBtn').style.display = 'none';
   $('stopBtn').style.display = 'inline-flex';
@@ -350,9 +399,12 @@ $('startBtn').onclick = async () => {
 };
 
 function showResultCards() {
+  const recon = mode === 'reconstruct';
   $('progressCard').style.display = 'block';
-  $('summaryGrid').style.display = 'grid';
-  $('resultsCard').style.display = 'block';
+  $('summaryGrid').style.display = recon ? 'none' : 'grid';
+  $('resultsCard').style.display = recon ? 'none' : 'block';
+  $('orphanCard').style.display = 'none';
+  $('reconCard').style.display = recon ? 'block' : 'none';
 }
 
 // Khi mở/refresh trang: nếu server đang có dữ liệu crawl thì hiển thị lại ngay
@@ -377,21 +429,66 @@ async function poll() {
   const res = await (await fetch('/api/results?since=' + records.length)).json();
   if (res.records.length) {
     records.push(...res.records);
-    computeDuplicates();
-    renderTable();
+    if (mode === 'reconstruct') { renderRecon(); }
+    else { computeDuplicates(); renderTable(); }
   }
   updateProgress(st);
-  updateSummary();
+  if (mode !== 'reconstruct') updateSummary();
   if (st.state !== 'running') {
     clearInterval(pollTimer);
     $('startBtn').style.display = 'inline-flex';
     $('stopBtn').style.display = 'none';
-    // Tải lại toàn bộ vì phân tầng + inlinks được tính lại khi crawl xong
     const all = await (await fetch('/api/results?since=0')).json();
     records = all.records;
-    computeDuplicates(); renderTable(); updateSummary();
-    loadOrphans();
+    if (mode === 'reconstruct') { renderRecon(); }
+    else {
+      // Tải lại toàn bộ vì phân tầng + inlinks được tính lại khi crawl xong
+      computeDuplicates(); renderTable(); updateSummary(); loadOrphans();
+    }
   }
+}
+
+// ---------- Bảng kết quả tái tạo URL ----------
+['reconFilterType', 'reconSearch'].forEach(id => {
+  const el = $(id);
+  el.oninput = renderRecon; el.onchange = renderRecon;
+});
+
+function reconPill(r) {
+  return `<span class="pill pill-${r.page_type}">${esc(r.page_type_label)}</span>`;
+}
+
+function renderRecon() {
+  const type = $('reconFilterType').value, q = $('reconSearch').value.trim().toLowerCase();
+  const rows = [];
+  let shown = 0, done = 0;
+  for (const r of records) {
+    if (r.reconstructed_url || r.breadcrumb_source) done++;
+    if (type && r.page_type !== type) continue;
+    if (q && !r.url.toLowerCase().includes(q)) continue;
+    shown++;
+    const trail = (r.breadcrumb || []).map(esc).join(' › ');
+    const recon = r.reconstructed_url
+      ? `<a href="https://${esc(r.reconstructed_url)}" target="_blank" style="color:var(--primary)">${esc(r.reconstructed_url)}</a>`
+      : '<span style="color:var(--muted)">— không dựng được (thiếu breadcrumb)</span>';
+    const src = r.breadcrumb_source
+      ? `<span class="pill pill-category">${esc(r.breadcrumb_source)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const stCell = typeof r.status === 'number'
+      ? (r.status >= 400 ? `<span class="st-bad">${r.status}</span>` : `<span class="st-ok">${r.status}</span>`)
+      : `<span class="st-bad">${esc(r.status || '?')}</span>`;
+    rows.push(`<tr>
+      <td class="url-cell" title="${esc(r.url)}"><a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a></td>
+      <td>${reconPill(r)}</td>
+      <td>${trail || '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="url-cell" style="max-width:360px">${recon}</td>
+      <td>${src}</td>
+      <td>${stCell}</td>
+    </tr>`);
+  }
+  $('reconBody').innerHTML = rows.join('');
+  $('reconNote').textContent =
+    `Hiển thị ${shown}/${records.length} URL — tái tạo được ${done}/${records.length} URL có category`;
 }
 
 function updateProgress(st) {
