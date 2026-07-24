@@ -102,6 +102,10 @@ URL_COLUMNS = [
     ("Tầng 1", "_seg1", 20),
     ("Tầng 2", "_seg2", 22),
     ("Tầng 3", "_seg3", 22),
+    ("Tầng 4", "_seg4", 22),
+    ("Tầng 5", "_seg5", 22),
+    ("Tầng 6", "_seg6", 22),
+    ("Đường dẫn thư mục", "_folder_path", 45),
     ("Độ sâu thư mục", "folder_depth", 13),
     ("Status", "status", 8),
     ("Redirect", "_redirect", 30),
@@ -138,6 +142,10 @@ def _row_for(record: dict):
             idx = int(key[4:]) - 1
             segments = record.get("path_segments") or []
             row.append(segments[idx] if idx < len(segments) else "")
+        elif key == "_folder_path":
+            # Toàn bộ thư mục cha (bỏ đoạn cuối vì đó là chính trang)
+            segments = record.get("path_segments") or []
+            row.append(" › ".join(segments[:-1]) if len(segments) > 1 else "")
         elif key == "_anchors":
             anchors = []
             for s in record.get("inlink_sources") or []:
@@ -308,7 +316,8 @@ async def export_xlsx():
 RECON_COLUMNS = [
     ("URL gốc", "url", 55),
     ("Loại trang", "page_type_label", 20),
-    ("Breadcrumb (category)", "_breadcrumb", 40),
+    ("Số cấp", "_levels", 8),
+    ("Breadcrumb (category)", "_breadcrumb", 45),
     ("URL tái tạo (category/post)", "reconstructed_url", 60),
     ("Nguồn", "breadcrumb_source", 16),
     ("Tiêu đề", "title", 45),
@@ -330,6 +339,8 @@ async def export_reconstruct_xlsx():
         for _, key, _w in RECON_COLUMNS:
             if key == "_breadcrumb":
                 row.append(" › ".join(r.get("breadcrumb") or []))
+            elif key == "_levels":
+                row.append(len(r.get("breadcrumb") or []))
             else:
                 v = r.get(key)
                 row.append("" if v is None else v)

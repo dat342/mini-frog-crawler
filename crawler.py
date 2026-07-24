@@ -184,29 +184,60 @@ def slugify_vn(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
 
 
-def clean_breadcrumb(names, domain: str, title: str) -> list:
-    """Làm sạch chuỗi breadcrumb: bỏ đoạn rỗng/generic/trùng, bỏ tên site đầu và tiêu đề cuối."""
+def _same_page(u1: str, u2: str) -> bool:
+    """So sánh 2 URL bỏ qua scheme/www/dấu / cuối."""
+    if not u1 or not u2:
+        return False
+    a, b = urlparse(u1), urlparse(u2)
+    return (strip_www(a.hostname or "") == strip_www(b.hostname or "")
+            and (a.path or "/").rstrip("/") == (b.path or "/").rstrip("/"))
+
+
+def _is_page_title(name: str, title: str) -> bool:
+    """Phần tử breadcrumb có phải chính tiêu đề trang không (khớp gần như hoàn toàn).
+
+    Dùng tỉ lệ độ dài thay vì 'chuỗi con' vì nhiều sản phẩm có tên bắt đầu bằng
+    đúng tên danh mục — vd danh mục 'Tủ bảo quản rượu vang' và sản phẩm
+    'Tủ bảo quản rượu vang Vinocave 80 chai' là hai thứ khác nhau.
+    """
+    ns, ts = slugify_vn(name), slugify_vn(title)
+    if not ns or not ts:
+        return False
+    if ns == ts:
+        return True
+    longer, shorter = (ts, ns) if len(ts) >= len(ns) else (ns, ts)
+    return longer.startswith(shorter) and len(shorter) >= 0.85 * len(longer)
+
+
+def clean_breadcrumb(items, domain: str, title: str, page_url: str = "") -> list:
+    """Làm sạch breadcrumb, giữ TỐI ĐA số cấp thư mục.
+
+    items: list các (tên, url) — url có thể None nếu cấp đó không phải link.
+    Chỉ bỏ: đoạn rỗng/generic, tên site ở đầu, và cấp cuối nếu đó chính là trang
+    hiện tại (không có link, hoặc link trỏ về chính nó, hoặc tên trùng tiêu đề).
+    """
     out = []
-    for n in names:
-        n = htmllib.unescape((n or "").strip()).lstrip("#").strip()
-        if not n or n.lower() in GENERIC_CRUMBS:
+    for it in items:
+        name, url = it if isinstance(it, (tuple, list)) else (it, None)
+        name = htmllib.unescape((name or "").strip()).lstrip("#").strip()
+        if not name or name.lower() in GENERIC_CRUMBS:
             continue
-        if out and out[-1].lower() == n.lower():
+        if out and out[-1][0].lower() == name.lower():
             continue
-        out.append(n)
+        out.append((name, url))
     # Bỏ phần tử đầu nếu là tên site (slug gần trùng domain) — vd "Thế Giới Di Động"
     if out:
         dom = domain.replace("www.", "").split(".")[0].replace("-", "")
-        first = slugify_vn(out[0]).replace("-", "")
+        first = slugify_vn(out[0][0]).replace("-", "")
         if first and (first in dom or dom in first):
             out = out[1:]
-    # Bỏ phần tử cuối nếu trùng tiêu đề bài (nó là title chứ không phải category)
-    if len(out) >= 2 and title:
-        ts = slugify_vn(title)
-        last = slugify_vn(out[-1])
-        if last and ts and (last in ts or ts in last or ts[:25] == last[:25]):
+    # Bỏ cấp cuối CHỈ KHI nó là chính trang hiện tại, không phải danh mục con
+    if len(out) >= 2:
+        name, url = out[-1]
+        is_current = (not url) or _same_page(url, page_url) or _is_page_title(name, title)
+        if is_current:
             out = out[:-1]
-    return out
+    return [name for name, _url in out]
 
 
 class CrawlJob:
@@ -822,29 +853,38 @@ class CrawlJob:
                         items = sorted(
                             o.get("itemListElement", []),
                             key=lambda x: x.get("position", 0) if isinstance(x, dict) else 0)
-                        names = []
+                        pairs = []
                         for it in items:
                             nm = it.get("name")
-                            if not nm and isinstance(it.get("item"), dict):
-                                nm = it["item"].get("name")
+                            itm = it.get("item")
+                            link = None
+                            if isinstance(itm, dict):
+                                nm = nm or itm.get("name")
+                                link = itm.get("@id") or itm.get("url")
+                            elif isinstance(itm, str):
+                                link = itm
                             if nm:
-                                names.append(nm)
-                        trail = clean_breadcrumb(names, domain, title)
+                                pairs.append((nm, link))
+                        trail = clean_breadcrumb(pairs, domain, title, url)
                         if trail:
                             return trail, "schema"
                     stack.extend(o.values())
                 elif isinstance(o, list):
                     stack.extend(o)
-        # 2. Breadcrumb HTML — chỉ lấy <a> để tránh nhân đôi
+        # 2. Breadcrumb HTML — lấy <a> kèm href; thêm cả phần tử cuối không có link
         for bc in soup.find_all(class_=re.compile(r"breadcrumb|crumb", re.I)):
-            parts = [a.get_text(" ", strip=True) for a in bc.find_all("a")]
-            trail = clean_breadcrumb(parts, domain, title)
+            pairs = []
+            for a in bc.find_all("a"):
+                href = a.get("href")
+                pairs.append((a.get_text(" ", strip=True),
+                              urljoin(url, href) if href else None))
+            trail = clean_breadcrumb(pairs, domain, title, url)
             if trail:
                 return trail, "HTML breadcrumb"
         # 3. meta article:section
         m = soup.find("meta", attrs={"property": "article:section"})
         if m and m.get("content"):
-            trail = clean_breadcrumb([m["content"]], domain, title)
+            trail = clean_breadcrumb([(m["content"], None)], domain, title, url)
             if trail:
                 return trail, "article:section"
         return [], None

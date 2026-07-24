@@ -309,7 +309,7 @@ td.url-cell a:hover{text-decoration:underline}
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>URL gốc</th><th>Loại trang</th><th>Breadcrumb (category)</th>
+          <th>URL gốc</th><th>Loại trang</th><th>Số cấp</th><th>Breadcrumb (category)</th>
           <th>URL tái tạo (category/post)</th><th>Nguồn</th><th>Status</th>
         </tr></thead>
         <tbody id="reconBody"></tbody>
@@ -480,6 +480,7 @@ function renderRecon() {
     rows.push(`<tr>
       <td class="url-cell" title="${esc(r.url)}"><a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a></td>
       <td>${reconPill(r)}</td>
+      <td style="text-align:center;font-weight:700;color:var(--primary)">${(r.breadcrumb || []).length || '—'}</td>
       <td>${trail || '<span style="color:var(--muted)">—</span>'}</td>
       <td class="url-cell" style="max-width:360px">${recon}</td>
       <td>${src}</td>
