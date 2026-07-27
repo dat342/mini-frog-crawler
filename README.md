@@ -124,8 +124,19 @@ Bấm **⬇ Excel** (7 sheet: Tổng quan / URLs / Hình ảnh / Trùng lặp / 
 ## 🗂 Cấu trúc code
 
 ```
-crawler.py          # Lõi crawl: asyncio + httpx + BeautifulSoup
-app.py              # Backend FastAPI + xuất Excel/CSV
-static/index.html   # Giao diện web (HTML/CSS/JS thuần)
-requirements.txt    # Thư viện Python
+crawler.py           # Lõi crawl: asyncio + httpx + BeautifulSoup
+app.py               # Backend FastAPI + xuất Excel/CSV
+static/index.html    # Giao diện web (HTML/CSS/JS thuần)
+requirements.txt     # Thư viện Python
+export-hoi-thoai.py  # Tiện ích: xuất lịch sử chat Claude Code ra file .txt
 ```
+
+## 💬 Xuất lịch sử trò chuyện Claude Code (tuỳ chọn)
+
+Nếu bạn dùng Claude Code để làm việc với dự án và muốn lưu lại cuộc trò chuyện ra file dễ đọc:
+
+```bash
+python3 "export-hoi-thoai.py"
+```
+
+Script tự tìm cửa sổ Claude Code đang làm việc (session sửa gần nhất) và xuất ra `~/Desktop/hoi-thoai-<ngày-giờ>.txt` — mỗi lượt **BẠN** / **CLAUDE** tách bạch, thao tác công cụ gom 1 dòng. Đặt tên file riêng: `python3 "export-hoi-thoai.py" ten-file.txt`
