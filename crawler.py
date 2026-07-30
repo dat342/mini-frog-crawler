@@ -404,6 +404,8 @@ class CrawlJob:
             "title": None, "title_length": 0,
             "meta_description": None, "meta_desc_length": 0,
             "h1_count": 0, "h1_texts": [], "h2_count": 0,
+            "h3_count": 0, "h4_count": 0, "h5_count": 0, "h6_count": 0,
+            "headings": [],
             "canonical": None, "canonical_ok": None,
             "meta_robots": None, "noindex": False,
             "og_image": None,
@@ -467,10 +469,16 @@ class CrawlJob:
 
         self._extract_dates(soup, record)
 
-        h1_texts = [h.get_text(" ", strip=True)[:200] for h in soup.find_all("h1")]
-        record["h1_texts"] = h1_texts
-        record["h1_count"] = len(h1_texts)
-        record["h2_count"] = len(soup.find_all("h2"))
+        # Thống kê đủ H1→H6, kèm dàn bài (heading outline) theo thứ tự xuất hiện
+        headings = []
+        for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            level = int(tag.name[1])
+            text = tag.get_text(" ", strip=True)[:200]
+            record[f"h{level}_count"] += 1
+            if text and len(headings) < 300:
+                headings.append({"level": level, "text": text})
+        record["headings"] = headings
+        record["h1_texts"] = [h["text"] for h in headings if h["level"] == 1]
 
         images, seen_src = [], set()
         for img in soup.find_all("img"):

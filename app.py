@@ -117,6 +117,11 @@ URL_COLUMNS = [
     ("Số H1", "h1_count", 7),
     ("H1", "_h1", 40),
     ("Số H2", "h2_count", 7),
+    ("Số H3", "h3_count", 7),
+    ("Số H4", "h4_count", 7),
+    ("Số H5", "h5_count", 7),
+    ("Số H6", "h6_count", 7),
+    ("Dàn bài (H1-H6)", "_outline", 60),
     ("Canonical", "canonical", 45),
     ("Canonical đúng", "_canonical_ok", 14),
     ("Meta robots", "meta_robots", 16),
@@ -156,6 +161,11 @@ def _row_for(record: dict):
             row.append(" ; ".join(record.get("redirect_chain") or []))
         elif key == "_h1":
             row.append(" | ".join(record.get("h1_texts") or []))
+        elif key == "_outline":
+            # Dàn bài thụt lề theo cấp: H2 thụt 1, H3 thụt 2...
+            lines = ["  " * (h["level"] - 1) + f"H{h['level']}: {h['text']}"
+                     for h in (record.get("headings") or [])]
+            row.append("\n".join(lines))
         elif key == "_canonical_ok":
             ok = record.get("canonical_ok")
             row.append("" if record.get("status") != 200 else ("Đúng" if ok else "Sai/Thiếu"))

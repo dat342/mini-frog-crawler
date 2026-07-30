@@ -282,7 +282,7 @@ td.url-cell a:hover{text-decoration:underline}
       <table>
         <thead><tr>
           <th>URL</th><th>Loại</th><th>Tầng</th><th>Status</th><th>Title</th><th>Meta</th>
-          <th>H1</th><th>H2</th><th>Canonical</th><th>Ảnh (thiếu alt)</th><th>Số từ</th><th>Inlinks</th>
+          <th>H1</th><th>H2</th><th>H3</th><th>H4</th><th>H5</th><th>H6</th><th>Canonical</th><th>Ảnh (thiếu alt)</th><th>Số từ</th><th>Inlinks</th>
           <th>Ngày đăng</th><th>Cập nhật</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
@@ -619,6 +619,10 @@ function renderTable() {
       <td>${r.status === 200 ? (r.meta_description ? r.meta_desc_length : '<span class="flag">Thiếu</span>') : '—'}</td>
       <td>${h1Cell}</td>
       <td>${r.status === 200 ? r.h2_count : '—'}</td>
+      <td>${r.status === 200 ? (r.h3_count || 0) : '—'}</td>
+      <td>${r.status === 200 ? (r.h4_count || 0) : '—'}</td>
+      <td>${r.status === 200 ? (r.h5_count || 0) : '—'}</td>
+      <td>${r.status === 200 ? (r.h6_count || 0) : '—'}</td>
       <td>${canonCell}</td>
       <td>${r.image_count}${r.images_missing_alt ? ` <span class="flag">(${r.images_missing_alt} thiếu alt)</span>` : ''}</td>
       <td>${r.status === 200 ? ((r.word_count || 0) < 150 ? `<span class="flag">${r.word_count || 0}</span>` : r.word_count) : '—'}</td>
@@ -647,14 +651,19 @@ $('tbody').onclick = e => {
   const inl = (r.inlink_sources || []).map(s =>
     `<tr><td class="url-cell" style="max-width:420px"><a href="${esc(s.from)}" target="_blank">${esc(s.from)}</a></td>
      <td>${esc(s.anchor) || '<span style="color:var(--muted)">(không có anchor)</span>'}</td></tr>`).join('');
-  detail.innerHTML = `<td colspan="14">
+  detail.innerHTML = `<td colspan="18">
     <dl class="detail-grid">
       <dt>Cây thư mục</dt><dd>${(r.path_segments || []).map(esc).join(' › ') || '(trang chủ)'}</dd>
       <dt>URL cuối (sau redirect)</dt><dd>${esc(r.final_url)}</dd>
       ${r.redirect_chain && r.redirect_chain.length ? `<dt>Chuỗi redirect</dt><dd>${esc(r.redirect_chain.join(' ; '))}</dd>` : ''}
       <dt>Title</dt><dd>${esc(r.title) || '<span class="flag">Thiếu</span>'}</dd>
       <dt>Meta description</dt><dd>${esc(r.meta_description) || '<span class="flag">Thiếu</span>'}</dd>
-      <dt>H1 (${r.h1_count})</dt><dd>${esc((r.h1_texts || []).join(' | ')) || '—'}</dd>
+      <dt>Heading (H1:${r.h1_count} H2:${r.h2_count} H3:${r.h3_count||0} H4:${r.h4_count||0} H5:${r.h5_count||0} H6:${r.h6_count||0})</dt><dd>${
+        (r.headings && r.headings.length)
+          ? `<div style="font-family:ui-monospace,monospace;font-size:12px;line-height:1.7;max-height:260px;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px">`
+            + r.headings.map(h => `<div style="padding-left:${(h.level-1)*16}px"><span style="color:var(--secondary);font-weight:700">H${h.level}</span> ${esc(h.text)}</div>`).join('')
+            + `</div>`
+          : '—'}</dd>
       <dt>Canonical</dt><dd>${esc(r.canonical) || '<span class="flag">Không có thẻ canonical</span>'}</dd>
       <dt>Meta robots</dt><dd>${esc(r.meta_robots) || '(không khai báo)'}${r.noindex ? ' <span class="flag">NOINDEX!</span>' : ''}</dd>
       <dt>Thumbnail (og:image)</dt><dd>${r.og_image ? `<a href="${esc(r.og_image)}" target="_blank">${esc(r.og_image)}</a>` : '<span class="flag">Không có</span>'}</dd>
