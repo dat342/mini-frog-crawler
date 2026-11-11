@@ -69,6 +69,11 @@ git clone https://github.com/dat342/mini-frog-crawler.git
 
 Đóng cửa sổ đen (Command Prompt) là tool tắt.
 
+### Cập nhật bản mới
+
+- Tải bằng **git clone**: file `.bat` tự `git pull` mỗi lần chạy, không cần làm gì.
+- Tải bằng **Download ZIP**: ZIP không tự cập nhật → xoá thư mục cũ, tải ZIP mới từ GitHub và giải nén lại (lần đầu chạy sẽ cài lại môi trường 1–2 phút).
+
 ### Lỗi thường gặp trên Windows
 
 | Hiện tượng | Cách xử lý |

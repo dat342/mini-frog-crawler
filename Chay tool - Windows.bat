@@ -28,6 +28,19 @@ if not exist ".venv\Scripts\python.exe" (
   echo Cai dat xong!
 )
 
+rem Tu cap nhat code moi nhat neu thu muc duoc tai bang git clone
+if exist ".git" (
+  where git >nul 2>nul
+  if not errorlevel 1 (
+    echo Dang kiem tra ban cap nhat...
+    git pull -q
+    .venv\Scripts\pip install -q -r requirements.txt
+  )
+)
+
+rem Tat server cu con chay ngam tren cong 8765 (neu co), tranh mo nham ban cu
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8765" ^| findstr "LISTENING"') do taskkill /f /pid %%p >nul 2>nul
+
 echo Dang khoi dong Mini Frog...
 start /b .venv\Scripts\python -m uvicorn app:app --port 8765
 timeout /t 3 >nul
