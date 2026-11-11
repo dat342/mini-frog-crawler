@@ -195,6 +195,11 @@ td.url-cell a:hover{text-decoration:underline}
         <textarea id="excludeArea" rows="2" placeholder="/tag/&#10;\?sort=&#10;/gio-hang"></textarea>
         <p class="hint">URL khớp bất kỳ mẫu nào sẽ bị bỏ qua. Không áp dụng cho chế độ "Chỉ đúng URL tôi dán".</p>
       </div>
+      <div style="margin-top:12px">
+        <label>User-Agent tùy chỉnh (để trống = dùng mặc định của tool)</label>
+        <input type="text" id="userAgent" placeholder="vd: token whitelist phía khách hàng cấp, khi website có tường lửa chống bot">
+        <p class="hint">Dùng khi website chặn crawler (403) và phía quản trị web đã whitelist một User-Agent riêng cho bạn. Tool sẽ gửi đúng chuỗi này khi quét.</p>
+      </div>
       <div class="checkline">
         <input type="checkbox" id="respectRobots" checked>
         <label for="respectRobots" style="margin:0">Tôn trọng robots.txt (khuyến nghị bật)</label>
@@ -371,6 +376,7 @@ $('startBtn').onclick = async () => {
     respect_robots: $('respectRobots').checked,
     use_wayback: $('useWayback').checked,
     use_wp_api: $('useWpApi').checked,
+    user_agent: $('userAgent').value.trim(),
     exclude: $('excludeArea').value.split('\n').map(s => s.trim()).filter(Boolean),
     patterns: {
       category: $('patCategory').value.split('\n').map(s => s.trim()).filter(Boolean),

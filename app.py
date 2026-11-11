@@ -32,6 +32,7 @@ class CrawlRequest(BaseModel):
     respect_robots: bool = True
     use_wayback: bool = False
     use_wp_api: bool = True
+    user_agent: str = ""
     concurrency: int = 5
     delay: float = 0.2
 

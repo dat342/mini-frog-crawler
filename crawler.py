@@ -119,9 +119,9 @@ def normalize_url(base: str, href: str):
         (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
         if k.lower() not in TRACKING_PARAMS and not k.lower().startswith("utm_")
     ]
+    # GIỮ NGUYÊN dấu "/" cuối: /duong-dan và /duong-dan/ có thể là 2 trang khác
+    # nhau trên server — việc khử trùng lặp dùng dedup_key(), không sửa URL fetch.
     path = parsed.path or "/"
-    if path != "/" and path.endswith("/"):
-        path = path.rstrip("/")
     port = ""
     if parsed.port and not (
         (parsed.scheme == "http" and parsed.port == 80)
@@ -129,6 +129,20 @@ def normalize_url(base: str, href: str):
     ):
         port = f":{parsed.port}"
     return urlunparse((parsed.scheme, host + port, path, "", urlencode(query_pairs), ""))
+
+
+def dedup_key(url: str) -> str:
+    """Khóa so trùng: coi /duong-dan và /duong-dan/ là cùng một trang.
+
+    Chỉ dùng khi SO SÁNH (khử trùng lặp hàng đợi, đối chiếu canonical,
+    sitemap/orphan, gom inlink) — không bao giờ dùng làm URL để fetch,
+    URL fetch giữ nguyên dấu "/" như người dùng dán.
+    """
+    p = urlparse(url)
+    path = p.path or "/"
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/") or "/"  # "//" cũng quy về trang chủ "/"
+    return urlunparse((p.scheme, p.netloc, path, "", p.query, ""))
 
 
 def classify(url: str, patterns: dict) -> str:
@@ -251,6 +265,9 @@ class CrawlJob:
         self.delay = max(float(config.get("delay", 0.2) or 0.2), 0.05)
         self.respect_robots = bool(config.get("respect_robots", True))
         self.use_wayback = bool(config.get("use_wayback", False))
+        # User-Agent tùy chỉnh: dùng khi website có WAF chống bot và phía quản trị
+        # đã whitelist một chuỗi UA riêng; để trống thì dùng mặc định của tool
+        self.user_agent = (config.get("user_agent") or "").strip() or USER_AGENT
 
         patterns = {**DEFAULT_PATTERNS}
         for key in ("category", "product", "blog"):
@@ -348,7 +365,9 @@ class CrawlJob:
             return True
         path = urlparse(url).path or "/"
         return any(
-            path == sp or path.startswith(sp.rstrip("/") + "/") or (sp == "/" )
+            path.rstrip("/") == sp.rstrip("/")
+            or path.startswith(sp.rstrip("/") + "/")
+            or (sp == "/")
             for sp in self.seed_paths
         )
 
@@ -356,7 +375,7 @@ class CrawlJob:
         if not self.respect_robots or self._robots is None:
             return True
         try:
-            return self._robots.can_fetch(USER_AGENT, url)
+            return self._robots.can_fetch(self.user_agent, url)
         except Exception:
             return True
 
@@ -374,14 +393,21 @@ class CrawlJob:
             self._robots = None
 
     def _enqueue(self, queue: asyncio.PriorityQueue, url: str, depth: int, referrer: str):
-        if url in self.seen or self.queued_count >= self.max_urls * 5:
+        # Chế độ list: người dùng có thể cố ý dán cả /duong-dan lẫn /duong-dan/
+        # để đối chiếu -> so trùng theo URL nguyên văn, không gộp 2 dạng làm một
+        key = url if self.mode == "list" else dedup_key(url)
+        if key in self.seen or self.queued_count >= self.max_urls * 5:
             return
         # Chế độ list: nhận mọi URL người dùng dán (kể cả khác domain)
         if self.mode != "list" and (not self._same_site(url) or not self._in_seed_scope(url)):
             return
-        if self.mode != "list" and any(p.search(url) for p in self.exclude_patterns):
+        # Mẫu loại trừ: thử cả dạng có và không có "/" cuối để pattern kiểu
+        # 'tin-tuc$' viết từ trước vẫn chặn được URL /tin-tuc/
+        if self.mode != "list" and any(
+            p.search(url) or p.search(dedup_key(url)) for p in self.exclude_patterns
+        ):
             return
-        self.seen.add(url)
+        self.seen.add(key)
         self.queued_count += 1
         page_type = classify(url, self.patterns)
         self._seq += 1
@@ -459,7 +485,10 @@ class CrawlJob:
             record["canonical"] = canonical
             norm_canon = normalize_url(record["final_url"], canonical)
             norm_self = normalize_url(record["final_url"], record["final_url"])
-            record["canonical_ok"] = bool(norm_canon and norm_canon == norm_self)
+            # So bằng dedup_key để không báo "Sai" chỉ vì khác dấu "/" cuối
+            record["canonical_ok"] = bool(
+                norm_canon and norm_self
+                and dedup_key(norm_canon) == dedup_key(norm_self))
         else:
             record["canonical_ok"] = False
 
@@ -502,9 +531,11 @@ class CrawlJob:
         links, seen_targets = [], set()
         for a in soup.find_all("a", href=True):
             n = normalize_url(record["final_url"], a["href"])
-            if not n or n in seen_targets:
+            # So trùng theo dedup_key: trang hay link lẫn lộn /lien-he và /lien-he/
+            # (menu vs nội dung) -> chỉ tính 1 lần, khỏi đội inlink lên gấp đôi
+            if not n or dedup_key(n) in seen_targets:
                 continue
-            seen_targets.add(n)
+            seen_targets.add(dedup_key(n))
             anchor = a.get_text(" ", strip=True)
             if not anchor:
                 img = a.find("img")
@@ -671,23 +702,27 @@ class CrawlJob:
         """Ghi nhận 1 liên kết nội bộ trỏ đến target (giữ tối đa 30 nguồn mẫu)."""
         if self.mode != "list" and not self._same_site(target):
             return
-        info = self.inlinks.get(target)
+        key = dedup_key(target)
+        info = self.inlinks.get(key)
         if info is None:
             info = {"count": 0, "sources": []}
-            self.inlinks[target] = info
+            self.inlinks[key] = info
         info["count"] += 1
         if len(info["sources"]) < 30:
             info["sources"].append({"from": source, "anchor": anchor})
 
     def _attach_inlinks(self):
         for r in self.records:
-            info = self.inlinks.get(r["url"])
+            info = self.inlinks.get(dedup_key(r["url"]))
             if info:
                 r["inlink_count"] = info["count"]
                 r["inlink_sources"] = info["sources"]
             # Ngày cập nhật: nếu trang không khai báo thì lấy từ sitemap <lastmod>
+            # (thử cả final_url — sitemap thường ghi URL đích sau redirect)
             if not r.get("date_modified"):
-                lastmod = self.sitemap_lastmod.get(r["url"])
+                lastmod = (self.sitemap_lastmod.get(dedup_key(r["url"]))
+                           or self.sitemap_lastmod.get(
+                               dedup_key(r.get("final_url") or r["url"])))
                 if lastmod:
                     r["date_modified"] = lastmod
                     src = r.get("date_source")
@@ -712,7 +747,14 @@ class CrawlJob:
         # Orphan = có trong sitemap nhưng crawler không hề gặp qua link nội bộ.
         # List mode không tính orphan (chỉ quét URL được dán nên so sánh vô nghĩa).
         if self.sitemap_urls and self.mode != "list":
-            self.orphan_urls = sorted(self.sitemap_urls - self.seen)[:1000]
+            # Trang đến được qua redirect (link nội bộ cũ 301 -> URL mới trong
+            # sitemap) cũng tính là "đã gặp", không phải orphan
+            crawled = set(self.seen)
+            for r in self.records:
+                if r.get("final_url"):
+                    crawled.add(dedup_key(r["final_url"]))
+            self.orphan_urls = sorted(
+                u for u in self.sitemap_urls if dedup_key(u) not in crawled)[:1000]
 
     async def _load_sitemaps_origin(self, client: httpx.AsyncClient, base: str, root_host: str):
         candidates = []
@@ -759,7 +801,7 @@ class CrawlJob:
                                 self.sitemap_urls.add(n)
                                 lastmod = re.search(r"<lastmod>\s*(.*?)\s*</lastmod>", block, re.I | re.S)
                                 if lastmod:
-                                    self.sitemap_lastmod[n] = clean_date(lastmod.group(1))
+                                    self.sitemap_lastmod[dedup_key(n)] = clean_date(lastmod.group(1))
                     else:
                         for loc in locs:
                             n = normalize_url(loc, loc)
@@ -1036,7 +1078,7 @@ class CrawlJob:
         queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         try:
             async with httpx.AsyncClient(
-                headers={"User-Agent": USER_AGENT, "Accept-Language": "vi,en;q=0.8"},
+                headers={"User-Agent": self.user_agent, "Accept-Language": "vi,en;q=0.8"},
                 follow_redirects=True,
                 timeout=httpx.Timeout(20.0),
                 limits=httpx.Limits(max_connections=self.concurrency + 2),
