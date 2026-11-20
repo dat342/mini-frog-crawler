@@ -394,8 +394,53 @@ async def export_csv():
 # ---------------- Xử lý data BD SEO (xu_ly_data) ----------------
 
 BD_ROOT = (Path.home() / "Downloads" / "Claude" / "SEONGON" / "5-inbox" / "bd-seo").resolve()
-BD_SHEETS = {"onpage": "onpage", "traffic": "traffic_ahrefs", "content": "content_topic", "backlink": "backlink_rd"}
-BD_EXT = {".csv", ".json", ".xlsx"}
+BD_SHEETS = {"onpage": "onpage", "traffic": "traffic_ahrefs", "content": "content_topic", "backlink": "backlink_rd",
+             "volume": "volume_trend", "batch": "batch_overview"}
+BD_EXT = {".csv", ".json", ".xlsx", ".txt"}
+BD_MAU_DIR = Path(__file__).resolve().parent / "xu_ly_data" / "mau"
+
+
+def _ds_mau():
+    """Danh sach mau trong xu_ly_data/mau/*.mau.json: [{id, ten, mo_ta, so_site_toi_da}]."""
+    out = []
+    for f in sorted(BD_MAU_DIR.glob("*.mau.json")):
+        mid = f.name[: -len(".mau.json")]
+        if not (BD_MAU_DIR / (mid + ".xlsx")).exists():
+            continue
+        try:
+            j = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            j = {}
+        out.append({"id": mid, "ten": j.get("ten_ngan") or j.get("ten") or mid, "mo_ta": j.get("mo_ta", ""),
+                    "so_site_toi_da": j.get("so_site_toi_da")})
+    return out
+
+
+def _ahrefs_batch_csv(sites, folder):
+    """Tong quan doi thu qua Ahrefs API (thay file Batch Analysis): DR, refdomain, traffic, keyword, value.
+    ~150 don vi/site. Ghi CSV dung dinh dang batch_overview doc duoc."""
+    import csv as _csv
+    import urllib.request as _ur
+    from xu_ly_data.traffic_ahrefs import doc_key
+    key = doc_key()
+    today = dt.date.today().isoformat()
+
+    def get(path):
+        req = _ur.Request("https://api.ahrefs.com/v3/" + path, headers={"Authorization": "Bearer " + key})
+        with _ur.urlopen(req, timeout=60) as f:
+            return json.loads(f.read().decode("utf-8"))
+    dest = folder / ("ahrefs-batch-api-%s.csv" % today)
+    with open(dest, "w", newline="", encoding="utf-8") as fo:
+        w = _csv.writer(fo)
+        w.writerow(["Target", "Mode", "Domain Rating", "Ref. domains", "Organic traffic", "Organic keywords", "Traffic value"])
+        for t in sites:
+            a = get("site-explorer/domain-rating?target=%s&date=%s" % (t, today))
+            b = get("site-explorer/metrics?target=%s&mode=subdomains&date=%s&select=org_traffic,org_keywords,org_cost"
+                    % (t, today))["metrics"]
+            c = get("site-explorer/backlinks-stats?target=%s&mode=subdomains&date=%s" % (t, today))["metrics"]
+            w.writerow([t, "subdomains", a["domain_rating"]["domain_rating"], c.get("live_refdomains", 0),
+                        b.get("org_traffic", 0), b.get("org_keywords", 0), round((b.get("org_cost") or 0) / 100)])
+    return str(dest)
 
 
 def _slug(text: str) -> str:
@@ -492,8 +537,33 @@ def _bd_build(fields: dict, files: dict, crawl_records) -> dict:
             if rules:
                 opts["rules"] = rules[0]
             modules.append({"key": key, "inputs": inputs, "opts": opts})
-    recipe = {"client": client, "sites": sites, "modules": modules}
-    out_path = folder / ("%s - BD SEO.xlsx" % _slug(client))
+        elif sh == "volume":
+            inputs = save("file_volume")
+            if not inputs:
+                raise HTTPException(400, "Mục Volume cần file danh sách từ khoá (.csv/.xlsx/.txt) hoặc file Keyword Planner")
+            opts = {}
+            if (fields.get("volume_kt") or [""])[0] == "1":
+                opts = {"nguon": "keywordtool", "location": 2704, "language": "vi"}
+            rv = save("rules_volume")
+            if rv:
+                opts["rules"] = rv[0]
+            modules.append({"key": key, "inputs": inputs, "opts": opts})
+        elif sh == "batch":
+            inputs = save("file_batch")
+            if not inputs and (fields.get("batch_api") or [""])[0] == "1":
+                if not sites:
+                    raise HTTPException(400, "Mục Tổng quan đối thủ cần danh sách website")
+                inputs = [_ahrefs_batch_csv(sites, folder)]
+            if not inputs:
+                raise HTTPException(400, "Mục Tổng quan đối thủ cần file Batch Analysis CSV hoặc tick lấy qua Ahrefs API")
+            modules.append({"key": key, "inputs": inputs, "opts": {"sites": sites}})
+    mau = (fields.get("mau") or ["bd-seo"])[0].strip() or "bd-seo"
+    ds = {m["id"]: m for m in _ds_mau()}
+    if mau not in ds:
+        raise HTTPException(400, "Không có mẫu '%s'" % mau)
+    recipe = {"client": client, "sites": sites, "modules": modules, "mau": mau}
+    ten_file = "BD SEO" if mau == "bd-seo" else "Định hướng dự án SEO"
+    out_path = folder / ("%s - %s (%s).xlsx" % (_slug(client), ten_file, dt.date.today().strftime("%d-%m-%Y")))
     manifest = build_from_recipe(recipe, str(out_path))
     return {
         "ok": True,
@@ -503,6 +573,11 @@ def _bd_build(fields: dict, files: dict, crawl_records) -> dict:
         "sheets": [{"sheet": e["sheet"], "rows": e["rows"], "caveats": e["caveats"]} for e in manifest["sheets"]],
         "warnings": manifest.get("warnings", []),
     }
+
+
+@app.get("/api/bd/maus")
+async def bd_maus():
+    return {"maus": _ds_mau()}
 
 
 @app.post("/api/bd/build")

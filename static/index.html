@@ -140,34 +140,55 @@ td.url-cell a:hover{text-decoration:underline}
 
   <!-- Xử lý data BD SEO -->
   <details class="card" id="bdCard">
-    <summary>📊 Xử lý data BD SEO (dựng file Excel 1.5 / 1.6 / 1.7 / 1.9)</summary>
+    <summary>📊 Xử lý data BD SEO (dựng file Excel theo mẫu)</summary>
     <div style="margin-top:14px">
       <div class="row">
+        <div><label for="bdMau">Mẫu trình bày</label><select id="bdMau"></select>
+          <div class="hint" id="bdMauHint"></div></div>
+      </div>
+      <div class="row" style="margin-top:10px">
         <div><label for="bdClient">Tên khách</label><input type="text" id="bdClient" placeholder="vd: Decathlon"></div>
       </div>
       <div style="margin-top:12px">
-        <label>Danh sách website (khách + đối thủ)</label>
+        <label>Danh sách website (dòng đầu = website khách, các dòng sau = đối thủ)</label>
         <div class="bd-sites" id="bdSites"></div>
         <button class="btn btn-outline" type="button" id="bdAddSite" style="padding:6px 14px;font-size:12px">+ Thêm website</button>
       </div>
       <div style="margin-top:14px">
-        <label>Chọn sheet cần dựng</label>
+        <label>Chọn phần cần dựng</label>
         <div class="bd-sheets">
-          <label><input type="checkbox" class="bd-sheet" value="onpage"> 1.5 Onpage</label>
-          <label><input type="checkbox" class="bd-sheet" value="traffic" checked> 1.6 Traffic (Ahrefs API)</label>
-          <label><input type="checkbox" class="bd-sheet" value="content"> 1.7 Content</label>
-          <label><input type="checkbox" class="bd-sheet" value="backlink" checked> 1.9 Backlink</label>
+          <label data-mau="dinh-huong-du-an"><input type="checkbox" class="bd-sheet" value="volume"> Volume thị trường</label>
+          <label data-mau="dinh-huong-du-an"><input type="checkbox" class="bd-sheet" value="batch"> Tổng quan đối thủ</label>
+          <label><input type="checkbox" class="bd-sheet" value="onpage"> Onpage</label>
+          <label data-mau="bd-seo"><input type="checkbox" class="bd-sheet" value="traffic"> Traffic 36 tháng (Ahrefs API)</label>
+          <label><input type="checkbox" class="bd-sheet" value="content"> Content</label>
+          <label><input type="checkbox" class="bd-sheet" value="backlink"> Backlink</label>
         </div>
       </div>
       <div class="bd-grid">
+        <div data-for="volume">
+          <label>Volume: danh sách từ khoá (.csv / .xlsx / .txt) hoặc file Keyword Planner</label>
+          <div class="bd-drop" data-field="file_volume">Kéo thả hoặc bấm để chọn file</div>
+          <div class="bd-files"></div>
+          <div class="checkline"><input type="checkbox" id="bdVolumeKT" checked><label for="bdVolumeKT" style="margin:0;font-weight:500">Lấy volume 12 tháng qua Keyword Tool (bỏ tick nếu file đã có volume)</label></div>
+          <div class="hint">Có cột Nhóm / Chủ đề thì dùng luôn; không có thì nạp file rules (JSON).</div>
+          <div class="bd-drop" data-field="rules_volume" data-single="1" style="margin-top:6px">Chọn file rules .json (tuỳ chọn)</div>
+          <div class="bd-files"></div>
+        </div>
+        <div data-for="batch">
+          <label>Tổng quan đối thủ: Ahrefs Batch Analysis CSV</label>
+          <div class="bd-drop" data-field="file_batch" data-single="1">Kéo thả hoặc bấm để chọn file</div>
+          <div class="bd-files"></div>
+          <div class="checkline"><input type="checkbox" id="bdBatchApi"><label for="bdBatchApi" style="margin:0;font-weight:500">Không có file: lấy qua Ahrefs API (~150 đơn vị/site)</label></div>
+        </div>
         <div data-for="onpage">
-          <label>1.5 Onpage: file Mini Frog (.xlsx / .json)</label>
+          <label>Onpage: file Mini Frog (.xlsx / .json)</label>
           <div class="bd-drop" data-field="file_onpage">Kéo thả hoặc bấm để chọn file</div>
           <div class="bd-files"></div>
           <div class="checkline"><input type="checkbox" id="bdUseCrawl"><label for="bdUseCrawl" style="margin:0;font-weight:500">Dùng kết quả crawl hiện tại trong Mini Frog</label></div>
         </div>
         <div data-for="content">
-          <label>1.7 Content: Top pages CSV (mỗi site 1 file)</label>
+          <label>Content: Ahrefs Top pages CSV (mỗi site 1 file)</label>
           <div class="bd-drop" data-field="file_content">Kéo thả hoặc bấm để chọn file</div>
           <div class="bd-files"></div>
           <label style="margin-top:10px">File rules (JSON, phân loại topic)</label>
@@ -175,7 +196,7 @@ td.url-cell a:hover{text-decoration:underline}
           <div class="bd-files"></div>
         </div>
         <div data-for="backlink">
-          <label>1.9 Backlink: Referring domains CSV (mỗi site 1 file)</label>
+          <label>Backlink: Ahrefs Referring domains CSV (mỗi site 1 file)</label>
           <div class="bd-drop" data-field="file_backlink">Kéo thả hoặc bấm để chọn file</div>
           <div class="bd-files"></div>
           <div class="hint">Tên file dạng &lt;domain&gt;-refdomains-....csv để tool nhận ra site.</div>
@@ -767,6 +788,28 @@ $('tbody').onclick = e => {
   for (let i = 0; i < 3; i++) addSiteRow('');
   $('bdAddSite').onclick = () => addSiteRow('');
 
+  const MAC_DINH = {"bd-seo": ["traffic", "backlink"], "dinh-huong-du-an": ["volume", "batch", "content", "backlink"]};
+  async function loadMaus() {
+    const sel = $('bdMau');
+    try {
+      const j = await (await fetch('/api/bd/maus')).json();
+      sel.innerHTML = j.maus.map(m => '<option value="' + esc(m.id) + '">' + esc(m.ten) + '</option>').join('');
+      sel.dataset.info = JSON.stringify(j.maus);
+    } catch (e) { sel.innerHTML = '<option value="bd-seo">Định hướng chuẩn (BD SEO)</option>'; }
+    sel.onchange = applyMau; applyMau();
+  }
+  function applyMau() {
+    const sel = $('bdMau'), id = sel.value;
+    const info = (JSON.parse(sel.dataset.info || '[]').find(m => m.id === id)) || {};
+    $('bdMauHint').textContent = (info.so_site_toi_da ? 'Tối đa ' + info.so_site_toi_da + ' website. ' : '') +
+      (id === 'dinh-huong-du-an' ? 'Website đầu = khách (Nghiên cứu nội tại), các website sau = đối thủ.' : '');
+    document.querySelectorAll('.bd-sheets label').forEach(l => {
+      const ok = !l.dataset.mau || l.dataset.mau === id;
+      l.style.display = ok ? '' : 'none';
+      const c = l.querySelector('input'); c.checked = ok && (MAC_DINH[id] || []).includes(c.value);
+    });
+    refreshSheets();
+  }
   function refreshSheets() {
     const on = {};
     document.querySelectorAll('.bd-sheet').forEach(c => on[c.value] = c.checked);
@@ -774,6 +817,7 @@ $('tbody').onclick = e => {
   }
   document.querySelectorAll('.bd-sheet').forEach(c => c.onchange = refreshSheets);
   refreshSheets();
+  loadMaus();
 
   function showFiles(drop) {
     const list = bdFiles[drop.dataset.field] || [];
@@ -799,8 +843,11 @@ $('tbody').onclick = e => {
   $('bdBuildBtn').onclick = async () => {
     const fd = new FormData();
     fd.append('client', $('bdClient').value.trim());
+    fd.append('mau', $('bdMau').value || 'bd-seo');
+    if ($('bdVolumeKT').checked) fd.append('volume_kt', '1');
+    if ($('bdBatchApi').checked) fd.append('batch_api', '1');
     document.querySelectorAll('#bdSites input').forEach(i => { if (i.value.trim()) fd.append('sites', i.value.trim()); });
-    document.querySelectorAll('.bd-sheet:checked').forEach(c => fd.append('sheets', c.value));
+    document.querySelectorAll('.bd-sheet:checked').forEach(c => { if (c.closest('label').style.display !== 'none') fd.append('sheets', c.value); });
     if ($('bdUseCrawl').checked) fd.append('onpage_use_crawl', '1');
     Object.keys(bdFiles).forEach(k => bdFiles[k].forEach(f => fd.append(k, f, f.name)));
     const btn = $('bdBuildBtn'), st = $('bdStatus'), out = $('bdResult');

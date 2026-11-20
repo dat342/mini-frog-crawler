@@ -1,7 +1,18 @@
 {
  "ten": "BD SEO (6 sheet: Mục lục, Định hướng, 1.5 Onpage, 1.6 Traffic, 1.7 Content, 1.9 Backlink)",
  "mo_ta": "Mẫu BD SEO của SEONGON (từ 'BD SEO _ c06_2026).xlsx', bố cục đã duyệt 20/11/2026). '1. Định hướng' có radar onpage từng site, line organic traffic, cột topic, 2 biểu đồ offpage và 4 ô nhận xét (onpage, organic_traffic, content, offpage); các sheet 1.5–1.9 là bảng số + dữ liệu thô từng site xếp cạnh nhau. Tạo lại: python -m xu_ly_data.mau.tao_bd_seo",
- "modules": ["onpage", "traffic_ahrefs", "content_topic", "backlink_rd"],
+ "modules": [
+  "onpage",
+  "traffic_ahrefs",
+  "content_topic",
+  "backlink_rd"
+ ],
  "so_site_toi_da": 3,
- "nhan_xet": ["onpage", "organic_traffic", "content", "offpage"]
+ "nhan_xet": [
+  "onpage",
+  "organic_traffic",
+  "content",
+  "offpage"
+ ],
+ "ten_ngan": "Định hướng chuẩn (BD SEO)"
 }
