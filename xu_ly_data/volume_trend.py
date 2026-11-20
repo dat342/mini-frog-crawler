@@ -199,6 +199,12 @@ def doc_file(path, sheet=None):
     """Doc 1 file -> {"fmt", "rows": [{"kw","nhom","chu_de","avg","thang":{(y,m):v}}], "co_nhom","co_cd",
     "so_khoang"}."""
     ext = os.path.splitext(path)[1].lower()
+    if ext == ".txt":  # danh sach tu khoa, moi dong 1 tu (dung voi nguon keywordtool)
+        with open(path, encoding="utf-8-sig") as f:
+            kws = [ln.strip() for ln in f if ln.strip()]
+        return {"fmt": "danh sách từ khoá (.txt)", "rows": [{"kw": k, "nhom": "", "chu_de": "", "avg": 0.0, "thang": {}}
+                                                          for k in kws],
+                "co_nhom": False, "co_cd": False, "so_khoang": 0, "co_tb": False, "so_thang": 0}
     if ext in (".xlsx", ".xlsm"):
         rows, fmt = _doc_xlsx_rows(path, sheet)
     else:
@@ -273,6 +279,71 @@ def _gan(kw, luat, k):
     return luat["default"]
 
 
+# ---------------------------------------------------------------- nguon KeywordTool.io
+KT_URL = "https://api.keywordtool.io/v2/search/volume/google"
+KT_LO = 500          # so tu khoa moi luot goi
+KT_CACH_GIAY = 6.5   # gioi han 10 luot/phut
+
+
+def doc_key_keywordtool():
+    k = os.environ.get("KEYWORDTOOL_API_KEY", "").strip()
+    if k:
+        return k
+    p = os.path.expanduser("~/.config/seongon/keywordtool.key")
+    if os.path.exists(p):
+        with open(p) as f:
+            return f.read().strip()
+    raise ValueError("Chưa có key KeywordTool: đặt KEYWORDTOOL_API_KEY hoặc tạo ~/.config/seongon/keywordtool.key (chmod 600)")
+
+
+def lay_volume_keywordtool(rows, opts, ctx):
+    # type: (List[Dict], Dict, Dict) -> Tuple[int, int]
+    """Dien avg + 12 thang cho rows tu KeywordTool.io (du lieu Google Ads). Cache theo tu khoa/vung/ngon ngu trong
+    ctx['cache_dir']/keywordtool.json: dung lai file khong ton luot goi. Tra ve (so luot goi, so tu tu cache)."""
+    import time
+    import urllib.request
+    loc = int(opts.get("location", 2704))
+    lang = str(opts.get("language", "vi"))
+    cache_dir = ctx.get("cache_dir") or ""
+    cpath = os.path.join(cache_dir, "keywordtool.json") if cache_dir else ""
+    cache = {}
+    if cpath and os.path.exists(cpath):
+        with open(cpath, encoding="utf-8") as f:
+            cache = json.load(f)
+    ck = lambda kw: "%s|%d|%s" % (kw.lower(), loc, lang)
+    can = sorted({r["kw"] for r in rows if ck(r["kw"]) not in cache})
+    luot = 0
+    if can:
+        key = doc_key_keywordtool()
+        for i in range(0, len(can), KT_LO):
+            if luot:
+                time.sleep(KT_CACH_GIAY)
+            lo = can[i:i + KT_LO]
+            payload = {"metrics_network": "googlesearchnetwork", "metrics_currency": "VND", "complete": True,
+                       "output": "json", "apikey": key, "metrics_location": [loc], "metrics_language": [lang],
+                       "keyword": lo}
+            req = urllib.request.Request(KT_URL, data=json.dumps(payload).encode("utf-8"),
+                                         headers={"content-type": "application/json"})
+            with urllib.request.urlopen(req, timeout=180) as f:
+                res = (json.loads(f.read().decode("utf-8")) or {}).get("results") or {}
+            luot += 1
+            for kw in lo:
+                v = res.get(kw) or {}
+                cache[ck(kw)] = {"volume": v.get("volume") or 0,
+                                 "thang": [[v.get("m%d_year" % j), v.get("m%d_month" % j), v.get("m%d" % j) or 0]
+                                           for j in range(1, 13) if v.get("m%d_year" % j)]}
+            if cpath:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cpath, "w", encoding="utf-8") as f:
+                    json.dump(cache, f, ensure_ascii=False)
+    tu_cache = len(rows) - len(can)
+    for r in rows:
+        v = cache.get(ck(r["kw"])) or {}
+        r["avg"] = float(v.get("volume") or 0)
+        r["thang"] = {(int(y), int(m)): float(x) for y, m, x in v.get("thang", [])}
+    return luot, tu_cache
+
+
 # ---------------------------------------------------------------- build
 def build(wb, inputs, opts, ctx):
     opts = opts or {}
@@ -280,6 +351,13 @@ def build(wb, inputs, opts, ctx):
     luat = doc_luat(opts.get("rules"))
     mac_dinh = (luat or {}).get("default", "Khác")
     files = [doc_file(p, opts.get("sheet")) for p in inputs]
+    nguon = str(opts.get("nguon") or "").lower()
+    kt_info = None
+    if nguon == "keywordtool":
+        # input chi can danh sach tu khoa (+ Nhom/Chu de neu co); volume lay tu KeywordTool.io
+        kt_info = lay_volume_keywordtool([r for f in files for r in f["rows"]], opts, ctx)
+        for f in files:
+            f["fmt"] = "KeywordTool.io API (Google Ads) ← " + f["fmt"]
 
     # gop, bo trung tu khoa (giu lan dau)
     seen, rows, trung, so_khoang = set(), [], 0, 0
@@ -459,6 +537,10 @@ def build(wb, inputs, opts, ctx):
         format(n, ","), format(int(round(tong)), ","), len(months),
         "%02d/%d" % (months[0][1], months[0][0]) if months else "-",
         "%02d/%d" % (months[-1][1], months[-1][0]) if months else "-")]
+    if kt_info is not None:
+        caveats.append("Nguồn volume: KeywordTool.io (dữ liệu Google Ads/Keyword Planner, số làm tròn theo thang Google); "
+                       "vùng %s, ngôn ngữ %s; %d lượt gọi API, %d từ lấy từ cache." % (
+                           opts.get("location", 2704), opts.get("language", "vi"), kt_info[0], kt_info[1]))
     if trung:
         caveats.append("Bỏ %d từ khoá trùng (giữ lần xuất hiện đầu)." % trung)
     if tong > 0:

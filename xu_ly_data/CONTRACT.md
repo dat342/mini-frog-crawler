@@ -225,3 +225,9 @@ Lệnh:
   `data_sheet` = sheet ẩn, `summaries` có `key` [+ `site`], bảng > 55 dòng chia thêm `TH_<key>_p1..`, `data_blocks`, `charts`, `so`
   đã đổi toạ độ, `claude_cells`…); mỗi sheet có thẻ nhan_xet thêm 1 entry `module: "mau"` với `notes` (label = khóa).
 - Mẫu kèm `<ten>.mau.json`: `ten`, `mo_ta`, `modules` (hoặc `module_can`/`module_tuy_chon`), `so_site_toi_da`, `nhan_xet`.
+
+### 8.4 Nguồn volume KeywordTool.io (21/11/2026)
+volume_trend opts `{"nguon": "keywordtool", "location": 2704, "language": "vi"}`: input chỉ cần danh sách từ khóa
+(CSV/xlsx có cột Từ khoá [+ Nhóm, Chủ đề], hoặc .txt mỗi dòng 1 từ). Tool gọi `POST https://api.keywordtool.io/v2/search/volume/google`
+(500 từ/lượt, cách 6,5 giây — giới hạn 10 lượt/phút), lấy volume TB + m1..m12, cache `<cache_dir>/keywordtool.json`.
+Key: env `KEYWORDTOOL_API_KEY` hoặc `~/.config/seongon/keywordtool.key` (không nằm trong repo). Số là thang làm tròn của Google Ads.
