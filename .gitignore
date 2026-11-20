@@ -8,3 +8,4 @@ nohup.out
 *.csv
 mau-test/
 *.cache.json
+!xu_ly_data/mau/*.xlsx

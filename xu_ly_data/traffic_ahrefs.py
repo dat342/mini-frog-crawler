@@ -115,39 +115,42 @@ def build(wb, inputs, opts, ctx):
 
     ws = wb.create_sheet(SHEET)
     raw = wb.create_sheet(DATA_SHEET)
-    raw.append(["Website", "Tháng", "Organic traffic"])
+    raw.append(["Website", "Tháng", "Organic traffic", "Kỳ"])
     n = 1
+    kys = {}
     for s in sites:
         for row in cache[s]:
             if row["date"][:10] < date_from:
                 continue
             n += 1
             d = dt.datetime.strptime(row["date"][:10], "%Y-%m-%d")
-            raw.append([s, d, row.get("org_traffic") or 0])
+            ky = d.strftime("%m/%Y")
+            kys[ky] = d
+            raw.append([s, d, row.get("org_traffic") or 0, ky])
             raw.cell(n, 2).number_format = "mm/yyyy"
     for c in raw[1]:
         c.font = Font(bold=True)
         c.fill = HEADER_FILL
-    last = n
+    last = max(n, 2)
 
     common.title(ws, "ORGANIC TRAFFIC THEO THÁNG – %d THÁNG GẦN NHẤT (Ahrefs)" % thang,
                  "Nguồn: Ahrefs API v3 › metrics-history (org_traffic, theo tháng). Dữ liệu thô ở sheet Traffic data.")
     h = 4
-    common.header_row(ws, h, 1, ["Tháng"] + sites)
-    thangs = sorted({r[1].value for r in raw.iter_rows(min_row=2)})
+    common.header_row(ws, h, 1, ["Time Period"] + sites)
+    thangs = sorted(kys, key=lambda k: kys[k])
     R = lambda col: "'%s'!$%s$2:$%s$%d" % (DATA_SHEET, col, col, last)
     for i, t in enumerate(thangs):
         r = h + 1 + i
-        ws.cell(r, 1, t).number_format = "mm/yyyy"
+        ws.cell(r, 1, t)
         for j in range(len(sites)):
             col = get_column_letter(2 + j)
-            ws.cell(r, 2 + j, "=SUMIFS(%s,%s,%s$%d,%s,$A%d)" % (R("C"), R("A"), col, h, R("B"), r)).number_format = "#,##0"
+            ws.cell(r, 2 + j, "=SUMIFS(%s,%s,%s$%d,%s,$A%d)" % (R("C"), R("A"), col, h, R("D"), r)).number_format = "#,##0"
     end = h + len(thangs)
     lastcol = get_column_letter(1 + len(sites))
-    summaries = [common.summary(
-        wb, ws, "TRAFFIC_thang", "A%d:%s%d" % (h, lastcol, end),
-        "Organic traffic theo tháng (dòng) x website (cột); cột A là ngày đầu tháng.")]
-    # tong ket: TB 12 thang gan nhat va tang truong so voi 12 thang truoc do
+    summaries = [common.bang(
+        wb, ws, "tr_thang", "A%d:%s%d" % (h, lastcol, end),
+        "Organic traffic theo tháng (dòng, cột 1 = tháng dạng chữ mm/yyyy) × website (cột).", name="TRAFFIC_thang")]
+    so = {"tr_tb12": [], "tr_tang_truong": [], "tr_dinh": []}
     s0 = end + 2
     common.header_row(ws, s0, 1, ["Tổng hợp"] + sites)
     labels = ["TB 12 tháng gần nhất", "TB 12 tháng trước đó", "Tăng trưởng"]
@@ -160,16 +163,19 @@ def build(wb, inputs, opts, ctx):
         if len(thangs) >= 24:
             ws.cell(s0 + 2, 2 + j, "=AVERAGE(%s%d:%s%d)" % (col, end - 23, col, end - 12)).number_format = "#,##0"
             ws.cell(s0 + 3, 2 + j, "=IFERROR(%s%d/%s%d-1,0)" % (col, s0 + 1, col, s0 + 2)).number_format = "0.0%"
-    summaries.append(common.summary(
-        wb, ws, "TRAFFIC_tong_hop", "A%d:%s%d" % (s0, lastcol, s0 + 3),
-        "TB traffic 12 tháng gần nhất, TB 12 tháng trước đó và tăng trưởng, theo website."))
+        so["tr_tb12"].append(common.so_cell(ws, "%s%d" % (col, s0 + 1), sites[j]))
+        so["tr_tang_truong"].append(common.so_cell(ws, "%s%d" % (col, s0 + 3), sites[j]))
+        so["tr_dinh"].append({"site": sites[j], "formula": "=MAX(%s%d:%s%d)" % (col, h + 1, col, end),
+                              "sheet": SHEET, "num_fmt": "#,##0"})
+    summaries.append(common.bang(
+        wb, ws, "tr_tong_hop", "A%d:%s%d" % (s0, lastcol, s0 + 3),
+        "TB traffic 12 tháng gần nhất, TB 12 tháng trước đó và tăng trưởng, theo website.", name="TRAFFIC_tong_hop"))
     ch = LineChart()
     ch.title = "Organic traffic theo tháng"
     ch.y_axis.numFmt = "#,##0"
     ch.y_axis.majorGridlines = None
     ch.add_data(Reference(ws, min_col=2, max_col=1 + len(sites), min_row=h, max_row=end), titles_from_data=True)
     ch.set_categories(Reference(ws, min_col=1, min_row=h + 1, max_row=end))
-    ch.x_axis.number_format = "mm/yyyy"
     ch.legend.position = "b"
     ch.height, ch.width = 9, 22
     ws.add_chart(ch, "%s4" % get_column_letter(len(sites) + 3))
@@ -179,11 +185,15 @@ def build(wb, inputs, opts, ctx):
         ws.column_dimensions[get_column_letter(2 + j)].width = 16
     columns = [{"name": "Website", "desc": "Website"},
                {"name": "Tháng", "desc": "Ngày đầu tháng"},
-               {"name": "Organic traffic", "desc": "Organic traffic ước tính của Ahrefs trong tháng"}]
+               {"name": "Organic traffic", "desc": "Organic traffic ước tính của Ahrefs trong tháng"},
+               {"name": "Kỳ", "desc": "Tháng dạng chữ mm/yyyy (khóa nối với bảng tr_thang)"}]
+    charts = [{"key": "tr_thang", "bang": "tr_thang", "loai": "line", "tieu_de": "So sánh Organic traffic"}]
+    du_lieu = [{"key": "tr_data", "sheet": DATA_SHEET, "site_col": "Website",
+                "cot": [["Kỳ", "Tháng"], ["Organic traffic", "Organic traffic"]]}]
     return common.entry(
         SHEET, KEY, DESC, sites, data_sheet=DATA_SHEET, rows=last - 1, columns=columns,
         summaries=summaries, caveats=_caveats(sites, cache, date_from), notes=[note],
-        extra={"units_used": units})
+        extra={"units_used": units, "sites": sites, "so": so, "charts": charts, "du_lieu": du_lieu})
 
 
 def dung_file(sites, out_path, thang=36):

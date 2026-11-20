@@ -1,0 +1,15 @@
+{
+  "ten": "Định hướng dự án SEO",
+  "file": "dinh-huong-du-an.xlsx",
+  "mo_ta": "File định hướng dự án SEO gửi khách (mẫu định hướng dự án SEONGON 11/2026): Brief, Nghiên cứu thị trường (xu hướng tìm kiếm), Nghiên cứu nội tại (site 1 = website khách: thương hiệu, tổng quan, onpage, offpage, traffic), Nghiên cứu đối thủ (site 2..5), Chiến lược triển khai, Hạng mục công việc, Bộ từ khoá triển khai. Brief, ảnh chụp SERP/PageSpeed/Ahrefs và phần chiến lược do người làm điền tay.",
+  "module_can": ["volume_trend", "batch_overview", "content_topic", "backlink_rd"],
+  "module_tuy_chon": ["onpage"],
+  "so_site_toi_da": 5,
+  "site_1": "website khách (sheet 3. Nghiên cứu nội tại)",
+  "site_doi_thu": [2, 3, 4, 5],
+  "the_chu": ["khach", "nam", "ngay", "site:1", "ten:2..5", "so:bo_traffic", "so:bo_dr", "so:bl_tong"],
+  "nhan_xet": ["thi_truong", "thuong_hieu", "thuong_hieu_serp", "onpage", "offpage", "traffic",
+               "doi_thu_tong_quan", "doi_thu_content", "doi_thu_traffic", "doi_thu_offpage"],
+  "dien_tay": ["1.Brief D8:J14 (trừ Website = {{site:1}})", "ảnh chụp ở sheet 3 (ô ghi chú 'Chèn ảnh chụp')",
+               "logo website ở sheet 4", "5. Chiến lược triển khai C11:C15, E22", "6.Bộ từ khoá triển khai (Demo) C9:F466"]
+}

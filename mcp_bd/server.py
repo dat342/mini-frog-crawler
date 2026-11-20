@@ -234,7 +234,10 @@ def t_mo_ta_file(a):
             L.append("- Khối dữ liệu [%s]: %s!%s (%s dòng, tiêu đề ở dòng %s). Cột: %s" % (
                 b.get("site", ""), q_sheet(b["sheet"]), b["range"], b.get("rows", "?"), b.get("header_row", "?"), cols))
         for s in sh.get("summaries", []):
-            L.append("- Tổng hợp %s: %s | %s" % (s["name"], s["range"], s.get("desc", "")))
+            tag = ""
+            if s.get("key"):
+                tag = " [key=%s%s]" % (s["key"], (", site=" + s["site"]) if s.get("site") else "")
+            L.append("- Tổng hợp %s%s: %s | %s" % (s["name"], tag, s["range"], s.get("desc", "")))
         for o in sh.get("options", []):
             cur = None
             try:
@@ -243,6 +246,10 @@ def t_mo_ta_file(a):
                 cur = "?(%s)" % e
             L.append("- Tùy chọn %s (%s) hiện = %s; chọn trong %s" % (o["cell"], o.get("label", ""),
                                                                       fmt_val(cur), o.get("values")))
+        for ch in sh.get("charts", []) or []:
+            L.append("- Biểu đồ %s%s (%s) tại %s!%s, dữ liệu %s" % (
+                ch.get("key"), (" [" + ch["site"] + "]") if ch.get("site") else "", ch.get("loai", ""),
+                q_sheet(ch.get("sheet", "")), ch.get("at", ""), ch.get("range", "")))
         for c in sh.get("caveats", []):
             L.append("! Lưu ý: %s" % c)
         for n in sh.get("notes", []) or []:

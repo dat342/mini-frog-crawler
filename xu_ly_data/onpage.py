@@ -414,6 +414,34 @@ def cham_site(site, tieu_chi):
     return out
 
 
+# ---------------------------------------------------------------- sheet du lieu an
+DATA_SHEET = "Onpage data"
+DATA_COLS = [("Website", None), ("URL", "url"), ("Loại trang", "page_type"), ("Status", "status"),
+             ("Title", "title"), ("Dài title", "title_length"), ("Meta description", "meta_description"),
+             ("Dài meta", "meta_desc_length"), ("Số H1", "h1_count"), ("Số H2", "h2_count"),
+             ("Canonical", "canonical"), ("Canonical đúng", "canonical_ok"), ("Noindex", "noindex"),
+             ("og:image", "og_image"), ("Số ảnh", "image_count"), ("Ảnh thiếu alt", "images_missing_alt"),
+             ("Số từ", "word_count"), ("Inlinks", "inlink_count"), ("Depth", "depth"), ("Phản hồi (ms)", "response_ms")]
+DATA_COL_DESC = [("Website", "Website"), ("URL", "URL đã crawl"),
+                 ("Loại trang", "homepage/category/product/blog/other"), ("Status", "HTTP status (chữ = lỗi kết nối)"),
+                 ("Title", "Thẻ title"), ("Dài title", "Số ký tự title"), ("Meta description", "Meta description"),
+                 ("Dài meta", "Số ký tự meta"), ("Số H1", "Số thẻ H1"), ("Số H2", "Số thẻ H2"), ("Canonical", "URL canonical"),
+                 ("Canonical đúng", "Có/Không/trống"), ("Noindex", "Có nếu meta robots noindex"), ("og:image", "Ảnh og"),
+                 ("Số ảnh", "Số ảnh"), ("Ảnh thiếu alt", "Số ảnh thiếu alt"), ("Số từ", "Số từ nội dung"),
+                 ("Inlinks", "Số link nội bộ trỏ đến"), ("Depth", "Số click từ trang chủ"), ("Phản hồi (ms)", "Thời gian phản hồi")]
+
+
+def _gia_tri(r, k):
+    v = r.get(k)
+    if isinstance(v, bool):
+        return "Có" if v else "Không"
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, ensure_ascii=False)[:500]
+    if isinstance(v, str) and len(v) > 1000:
+        return v[:1000]
+    return v
+
+
 # ---------------------------------------------------------------- build
 def build(wb, inputs, opts, ctx):
     opts = opts or {}
@@ -426,7 +454,7 @@ def build(wb, inputs, opts, ctx):
     data = [doc_site(p) for p in inputs]
     names = opts.get("sites") or None
     if not names and ctx.get("sites") and len(ctx["sites"]) == len(inputs):
-        names = ctx["sites"]
+        names = common.ten_site_theo_file(inputs, ctx["sites"])
     if names and len(names) == len(inputs):
         for d, nm in zip(data, names):
             d["site"] = nm
@@ -441,68 +469,85 @@ def build(wb, inputs, opts, ctx):
     kq = [cham_site(d, tcs) for d in data]
 
     ws = wb.create_sheet(SHEET)
+    # ---- sheet du lieu an: ban ghi crawl
+    dws = wb.create_sheet(DATA_SHEET)
+    common.header_row(dws, 1, 1, [c[0] for c in DATA_COLS])
+    n_data = 1
+    for d in data:
+        for r in d["records"]:
+            n_data += 1
+            dws.append([d["site"]] + [_gia_tri(r, k) for _n, k in DATA_COLS[1:]])
+    dws.freeze_panes = "B2"
     common.title(ws, "ĐÁNH GIÁ ONPAGE THEO TIÊU CHÍ (tool tự chấm phần đo được từ crawl, phần còn lại để Claude chấm)",
-                 "Nguồn: crawl Mini Frog. Điểm nhóm = số tiêu chí 'Đạt' / số tiêu chí đã chấm (ô trống bị bỏ qua). "
-                 "Tiêu chí CMS, GSC, GA4 đã loại.")
+                 "Nguồn: crawl Mini Frog (sheet ẩn '%s'). Điểm nhóm = Đạt / (Đạt + Chưa đạt); ô trống, 'Chưa kiểm' "
+                 "không tính. Tiêu chí CMS, GSC, GA4 đã loại." % DATA_SHEET)
     n_tc = len(tcs)
-    r_first = HDR_ROW_TC + 1
-    r_last = HDR_ROW_TC + n_tc
-    c_eval0 = 7                       # G
-    c_evid0 = c_eval0 + N
-    c_who = c_evid0 + N
     L = get_column_letter
+    r_diem = 4
+    r_tot = r_diem + 1 + len(groups)
+    r_dc = r_tot + 2                  # op_da_cham
+    hdr = r_dc + 4                    # tieu de bang tieu chi
+    r_first, r_last = hdr + 1, hdr + n_tc
+    c_eval0 = 6                       # F
+    c_evid0 = c_eval0 + N
+    c_ng = c_evid0 + N
+    c_who = c_ng + 1
 
     def rng(col):
         return "$%s$%d:$%s$%d" % (col, r_first, col, r_last)
 
-    # ---- bang diem nhom
-    common.header_row(ws, 4, 1, ["Nhóm"] + ["Điểm %s" % s for s in sites])
-    for i, g in enumerate(groups):
-        r = 5 + i
-        ws.cell(r, 1, g).border = common.BOX
+    # ---- op_diem
+    common.header_row(ws, r_diem, 1, ["Nhóm"] + sites)
+    so = {"op_diem_tong": []}
+    for i, g in enumerate(groups + [None]):
+        r = r_diem + 1 + i
+        ws.cell(r, 1, g if g else "Tổng (mọi tiêu chí đã chấm)").border = common.BOX
         for j in range(N):
             col = L(c_eval0 + j)
-            d_ = 'COUNTIFS(%s,$A%d,%s,"%s")' % (rng("A"), r, rng(col), DAT)
-            x_ = 'COUNTIFS(%s,$A%d,%s,"%s")' % (rng("A"), r, rng(col), CHUA_DAT)
+            if g is None:
+                d_ = 'COUNTIF(%s,"%s")' % (rng(col), DAT)
+                x_ = 'COUNTIF(%s,"%s")' % (rng(col), CHUA_DAT)
+            else:
+                d_ = 'COUNTIFS(%s,$A%d,%s,"%s")' % (rng("A"), r, rng(col), DAT)
+                x_ = 'COUNTIFS(%s,$A%d,%s,"%s")' % (rng("A"), r, rng(col), CHUA_DAT)
             c = ws.cell(r, 2 + j, '=IFERROR(%s/(%s+%s),"")' % (d_, d_, x_))
-            c.number_format = "0%"
+            c.number_format = "0.0%"
             c.border = common.BOX
-    r_tot = 5 + len(groups)
-    ws.cell(r_tot, 1, "Tổng (mọi tiêu chí đã chấm)").font = Font(bold=True)
-    ws.cell(r_tot + 1, 1, "% tiêu chí đã chấm").font = Font(bold=True)
-    ws.cell(r_tot + 2, 1, "Số tiêu chí chưa chấm (Claude)").font = Font(bold=True)
+            if g is None:
+                c.font = Font(bold=True)
+                so["op_diem_tong"].append(common.so_cell(ws, "%s%d" % (L(2 + j), r), sites[j]))
+    sums = [common.bang(wb, ws, "op_diem", "A%d:%s%d" % (r_diem, L(1 + N), r_tot),
+                        "Điểm onpage theo nhóm × website (Đạt / (Đạt + Chưa đạt)); dòng cuối = tổng.",
+                        total_rows=1, name="Onpage_Diem")]
+    # ---- op_da_cham
+    common.header_row(ws, r_dc, 1, ["Tiến độ chấm"] + sites)
+    ws.cell(r_dc + 1, 1, "% tiêu chí đã chấm").border = common.BOX
+    ws.cell(r_dc + 2, 1, "Số tiêu chí chưa chấm").border = common.BOX
     for j in range(N):
         col = L(c_eval0 + j)
         d_ = 'COUNTIF(%s,"%s")' % (rng(col), DAT)
         x_ = 'COUNTIF(%s,"%s")' % (rng(col), CHUA_DAT)
-        c = ws.cell(r_tot, 2 + j, '=IFERROR(%s/(%s+%s),"")' % (d_, d_, x_))
+        c = ws.cell(r_dc + 1, 2 + j, "=(%s+%s)/ROWS(%s)" % (d_, x_, rng(col)))
         c.number_format = "0%"
-        c.font = Font(bold=True)
-        c = ws.cell(r_tot + 1, 2 + j, "=(%s+%s)/ROWS(%s)" % (d_, x_, rng(col)))
-        c.number_format = "0%"
-        ws.cell(r_tot + 2, 2 + j, "=ROWS(%s)-%s-%s" % (rng(col), d_, x_))
-        for rr in (r_tot, r_tot + 1, r_tot + 2):
-            ws.cell(rr, 2 + j).border = common.BOX
-    for rr in (r_tot, r_tot + 1, r_tot + 2):
-        ws.cell(rr, 1).border = common.BOX
-    sums = [common.summary(wb, ws, "Onpage_Diem", "A4:%s%d" % (L(1 + N), r_tot + 2),
-                           "Bảng điểm onpage theo nhóm × website (0-100%: tiêu chí Đạt / tiêu chí đã chấm)")]
-
+        c.border = common.BOX
+        ws.cell(r_dc + 2, 2 + j, "=ROWS(%s)-%s-%s" % (rng(col), d_, x_)).border = common.BOX
+    sums.append(common.bang(wb, ws, "op_da_cham", "A%d:%s%d" % (r_dc, L(1 + N), r_dc + 2),
+                            "Tiến độ chấm: % tiêu chí đã chấm (Đạt/Chưa đạt) và số tiêu chí còn trống, theo website."))
     notes = [common.note_area(ws, "%s5" % L(N + 3), 6, 7, "NHẬN XÉT")]
 
-    # ---- bang tieu chi
-    heads = ["Nhóm", "Nhóm con", "Vấn đề cần kiểm tra", "Vì sao cần làm", "Yêu cầu đầu ra", "Ngưỡng tự chấm"]
-    heads += ["Đánh giá %s" % s for s in sites] + ["Bằng chứng %s" % s for s in sites] + ["Người chấm"]
-    common.header_row(ws, HDR_ROW_TC, 1, heads)
-    dv = DataValidation(type="list", formula1='"%s,%s"' % (DAT, CHUA_DAT), allow_blank=True)
+    # ---- op_tieu_chi
+    heads = ["Nhóm", "Nhóm con", "Vấn đề cần kiểm tra", "Vì sao cần làm", "Yêu cầu đầu ra"]
+    heads += ["Đánh giá %s" % s for s in sites] + ["Bằng chứng %s" % s for s in sites] + ["Ngưỡng tự chấm", "Người chấm"]
+    common.header_row(ws, hdr, 1, heads)
+    dv = DataValidation(type="list", formula1='"%s,%s,Chưa kiểm"' % (DAT, CHUA_DAT), allow_blank=True)
     ws.add_data_validation(dv)
     wrap = Alignment(wrap_text=True, vertical="top")
-    claude_cells, claude_items = [], []
+    claude_cells, claude_items, claude_pairs = [], [], {}
     auto_cnt = [0] * N
+    q = common.quote_sheet(SHEET)
     for i, t in enumerate(tcs):
         r = r_first + i
-        vals = [t["nhom"], t["nhom_con"], t["van_de"], t["vi_sao"], t["yeu_cau"],
-                t.get("nguong") or ("Claude chấm tay" if not t.get("auto") else "")]
+        vals = [t["nhom"], t["nhom_con"], t["van_de"], t["vi_sao"], t["yeu_cau"]]
         for j, v in enumerate(vals):
             c = ws.cell(r, 1 + j, v)
             c.alignment = wrap
@@ -520,11 +565,14 @@ def build(wb, inputs, opts, ctx):
                 ce.value, cv.value = res[0], res[1]
                 auto_cnt[j] += 1
             else:
-                empty_here.append("%s!%s" % (common.quote_sheet(SHEET), ce.coordinate))
+                ref = "%s!%s" % (q, ce.coordinate)
+                empty_here.append(ref)
+                claude_pairs[ref] = "%s!%s" % (q, cv.coordinate)
+        ws.cell(r, c_ng, t.get("nguong") or ("Claude chấm tay" if not t.get("auto") else "")).alignment = wrap
         n_auto = N - len(empty_here)
         who = "Tool" if not empty_here else ("Claude" if n_auto == 0 else "Tool + Claude")
         c = ws.cell(r, c_who, who)
-        c.border = common.BOX
+        c.border = ws.cell(r, c_ng).border = common.BOX
         c.alignment = Alignment(horizontal="center", vertical="top")
         if empty_here:
             claude_cells += empty_here
@@ -535,29 +583,19 @@ def build(wb, inputs, opts, ctx):
     area = "%s%d:%s%d" % (L(c_eval0), r_first, L(c_eval0 + N - 1), r_last)
     ws.conditional_formatting.add(area, CellIsRule(operator="equal", formula=['"%s"' % DAT], fill=green))
     ws.conditional_formatting.add(area, CellIsRule(operator="equal", formula=['"%s"' % CHUA_DAT], fill=red))
-    for col, w in zip("ABCDEF", [20, 18, 38, 45, 45, 38]):
+    for col, w in zip("ABCDE", [20, 18, 38, 45, 45]):
         ws.column_dimensions[col].width = w
     for j in range(N):
         ws.column_dimensions[L(c_eval0 + j)].width = 14
         ws.column_dimensions[L(c_evid0 + j)].width = 42
+    ws.column_dimensions[L(c_ng)].width = 30
     ws.column_dimensions[L(c_who)].width = 14
     ws.freeze_panes = "D%d" % r_first
-
-    # ---- vung tong hop cua bang tieu chi: moi nhom (chia khuc <= 55 dong)
-    r = r_first
-    while r <= r_last:
-        g = tcs[r - r_first]["nhom"]
-        e = r
-        while e < r_last and tcs[e + 1 - r_first]["nhom"] == g and e - r + 1 < MAX_ROWS_SUMMARY:
-            e += 1
-        part = "A%d:%s%d" % (HDR_ROW_TC if r == r_first else r, L(c_who), e)
-        # moi vung gom dong tieu de de Claude doc duoc ten cot
-        part = "A%d:%s%d" % (r, L(c_who), e)
-        name = "Onpage_TC_%s_%d" % (re.sub(r"[^A-Za-z0-9]+", "_", _khong_dau(g)).strip("_"), r)
-        sums.append(common.summary(wb, ws, name, part,
-                                   "Tiêu chí nhóm '%s' dòng %d-%d: đánh giá + bằng chứng từng website (tiêu đề cột ở dòng %d)"
-                                   % (g, r, e, HDR_ROW_TC)))
-        r = e + 1
+    sums.append(common.bang(wb, ws, "op_tieu_chi", "A%d:%s%d" % (hdr, L(c_who), r_last),
+                            "Bảng tiêu chí: Nhóm, Nhóm con, Vấn đề, Vì sao, Yêu cầu, Đánh giá từng website (Đạt/Chưa đạt/"
+                            "Chưa kiểm, trống = chờ Claude), Bằng chứng từng website, Ngưỡng tự chấm, Người chấm.",
+                            name="Onpage_TieuChi"))
+    validations = [{"range": "%s!%s" % (q, area), "values": [DAT, CHUA_DAT, "Chưa kiểm"]}]
 
     # ---- caveats
     caveats = []
@@ -589,13 +627,14 @@ def build(wb, inputs, opts, ctx):
     n_claude_rows = len(claude_items)
     return common.entry(
         SHEET, KEY, "Chấm tiêu chí onpage (nhóm, đạt/chưa đạt kèm bằng chứng) cho từng website từ crawl Mini Frog",
-        inputs, data_sheet=None, rows=n_tc,
-        columns=[{"name": "Đánh giá <website>", "desc": "Đạt / Chưa đạt (trống = chờ Claude chấm)"},
-                 {"name": "Bằng chứng <website>", "desc": "Con số đo được, vd '12/340 URL thiếu H1'"},
-                 {"name": "Người chấm", "desc": "Tool / Claude / Tool + Claude"}],
+        inputs, data_sheet=DATA_SHEET, rows=n_data - 1,
+        columns=[{"name": n_, "desc": d_} for n_, d_ in DATA_COL_DESC],
         summaries=sums, options=[], caveats=caveats, notes=notes,
         extra={"sites": sites, "claude_cells": claude_cells, "claude_items": claude_items,
-               "criteria_header_row": HDR_ROW_TC, "criteria_rows": [r_first, r_last],
+               "claude_pairs": claude_pairs, "validations": validations, "so": so,
+               "charts": [{"key": "op_diem", "bang": "op_diem", "loai": "radar", "tieu_de": "{{ten}}"}],
+               "du_lieu": [{"key": "op_data", "sheet": DATA_SHEET, "site_col": "Website"}],
+               "criteria_header_row": hdr, "criteria_rows": [r_first, r_last],
                "stats": {"tong_tieu_chi": n_tc, "auto_rule": sum(1 for t in tcs if t.get("auto")),
                          "claude_rows": n_claude_rows}})
 

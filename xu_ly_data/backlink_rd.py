@@ -111,7 +111,7 @@ COLUMNS = [
     {"name": "Traffic", "desc": "Organic traffic ước tính của refdomain"},
     {"name": "First seen", "desc": "Ngày Ahrefs thấy link đầu tiên"},
     {"name": "Lost", "desc": "Ngày mất link (trống = còn link)"},
-    {"name": "Trạng thái", "desc": "Còn/Mất, tính từ cột Lost"},
+    {"name": "Trạng thái", "desc": "Còn/Mất (giá trị, từ cột Lost)"},
     {"name": "Nhóm chất lượng", "desc": "Spam, 0, 1-30, 30-50, 50-70, 70-100 (theo Spam rồi DR)"},
     {"name": "Năm first seen", "desc": "Năm của First seen"},
 ]
@@ -147,9 +147,34 @@ def _caveats(sites, nams):
     return out
 
 
+def _nhom(spam, dr):
+    if spam:
+        return "Spam"
+    if dr == 0:
+        return "0"
+    if dr <= 30:
+        return "1-30"
+    if dr <= 50:
+        return "30-50"
+    if dr <= 70:
+        return "50-70"
+    return "70-100"
+
+
+DU_LIEU_COT = [["Domain", "Domain"], ["Spam", "Spam"], ["DR", "DR"], ["Links to target", "Links to target"],
+               ["First seen", "First seen"], ["Lost", "Lost"], ["Trạng thái", "Trạng thái"],
+               ["Nhóm chất lượng", "Nhóm"], ["Năm first seen", "Năm"]]
+MAU_NHOM_BRAND = ["#C00000", "#BFBFBF", "#12D6F7", "#7FA6F7", "#004AEF", "#1F2329"]
+
+
 def build(wb, inputs, opts, ctx):
+    """Sheet 1.9 Backlink theo CONTRACT muc 8.2: bang bl_tuy_chon (3 o chon), bl_theo_nam, bl_chat_luong,
+    bl_chat_luong_pct, bl_site (moi site); moi cong thuc tro 'RD data' hoac o trong cac bang tren."""
     opts = opts or {}
+    ctx = ctx or {}
     names = opts.get("sites") or []
+    if not names and ctx.get("sites") and len(ctx["sites"]) == len(inputs):
+        names = common.ten_site_theo_file(inputs, ctx["sites"])
     sites = []
     for i, p in enumerate(inputs):
         s, rows = doc_file(p, names[i] if i < len(names) else None)
@@ -158,7 +183,7 @@ def build(wb, inputs, opts, ctx):
     ws = wb.create_sheet(SHEET)
     rd = wb.create_sheet(DATA_SHEET)
 
-    # ---------- RD data ----------
+    # ---------- RD data (Trang thai/Nhom/Nam la gia tri tinh san) ----------
     rd.append([c["name"] for c in COLUMNS])
     n = 1
     years = []
@@ -166,13 +191,10 @@ def build(wb, inputs, opts, ctx):
         for d in rows:
             n += 1
             rd.append([site, d[0], "Spam" if d[1] else "", d[2], d[3], d[4], d[5], d[6], d[7],
-                       '=IF(I%d="","Còn","Mất")' % n,
-                       '=IF(C{0}="Spam","Spam",IF(D{0}=0,"0",IF(D{0}<=30,"1-30",IF(D{0}<=50,"30-50",'
-                       'IF(D{0}<=70,"50-70","70-100")))))'.format(n),
-                       '=IF(H%d="","",YEAR(H%d))' % (n, n)])
+                       "Mất" if d[7] else "Còn", _nhom(d[1], d[2]), d[6].year if d[6] else ""])
             if d[6]:
                 years.append(d[6].year)
-    last = n
+    last = max(n, 2)
     for c in ("H", "I"):
         for cell in rd[c][1:]:
             cell.number_format = "dd/mm/yyyy"
@@ -187,51 +209,68 @@ def build(wb, inputs, opts, ctx):
     nam_cuoi = max(years) if years else dt.date.today().year
     nam_dau = nam_dau or max(min(years) if years else nam_cuoi, nam_cuoi - 6)
     nams = list(range(nam_dau, nam_cuoi + 1))
+    ny = len(nams)
     R = lambda col: "'%s'!$%s$2:$%s$%d" % (DATA_SHEET, col, col, last)
+    site_names = [s for s, _ in sites]
+    N = len(site_names)
+    L = get_column_letter
 
-    # ---------- 1.9 Backlink ----------
     common.title(ws, "ĐÁNH GIÁ BACKLINK THEO REFERRING DOMAINS",
                  "Nguồn: Ahrefs › Referring domains (export CSV). Nhóm chất lượng: Spam theo nhãn Ahrefs, còn lại theo DR.")
     chi_so = opts.get("chi_so") if opts.get("chi_so") in CHI_SO else CHI_SO[0]
     pham_vi = opts.get("pham_vi") if opts.get("pham_vi") in PHAM_VI else PHAM_VI[0]
     hien_spam = opts.get("hien_spam") if opts.get("hien_spam") in ("Có", "Không") else "Không"
-    options = [
-        common.option(ws, "B3", "Chỉ số", CHI_SO, chi_so, "← chọn ở ô vàng"),
-        common.option(ws, "B4", "Phạm vi", PHAM_VI, pham_vi),
-        common.option(ws, "B5", "Hiện Spam", ["Có", "Không"], hien_spam,
-                      "Không = bỏ Spam khỏi cột Tổng và biểu đồ (cột % Spam vẫn tính)"),
-    ]
-    ws["D3"] = '=IF($B$4="%s","Còn","*")' % PHAM_VI[0]
-    ws["D3"].font = Font(color="FFFFFF")  # o phu: dieu kien trang thai
-
-    def cong_thuc(site_cell, nhom_cell, nam_cell):
-        dk = "%s,%s,%s,%s,%s,\"<\"&DATE(%s+1,1,1),%s,$D$3" % (
-            R("A"), site_cell, R("K"), nhom_cell, R("H"), nam_cell, R("J"))
-        return '=IF($B$3="Links to target",SUMIFS(%s,%s),COUNTIFS(%s))' % (R("E"), dk, dk)
-
-    row = 7
-    blocks = []
     summaries = []
-    for si, (site, _) in enumerate(sites):
-        ws.cell(row, 1, site).font = Font(bold=True, size=12, color=XANH)
-        ws.cell(row, 3, "Lũy kế đến hết năm (domain có first seen trước 1/1 năm sau)").font = Font(italic=True, color="7F7F7F")
-        h = row + 1
-        heads = ["Năm"] + NHOM + ["Tổng", "% DR>30 không spam", "% Spam"]
-        for j, t in enumerate(heads, 1):
-            c = ws.cell(h, j, t)
-            c.font = Font(bold=True)
-            c.fill = HEADER_FILL
-            c.alignment = Alignment(horizontal="center", wrap_text=True)
-            c.border = BOX
+    # ---- bl_tuy_chon A4:B7 (o chon B5:B7)
+    common.header_row(ws, 4, 1, ["Tùy chọn", "Giá trị"])
+    opt_vals = [("Chỉ số", CHI_SO, chi_so), ("Phạm vi", PHAM_VI, pham_vi), ("Hiện Spam", ["Có", "Không"], hien_spam)]
+    options = []
+    for k, (lab, vals, df) in enumerate(opt_vals):
+        r = 5 + k
+        ws.cell(r, 1, lab).font = Font(bold=True)
+        ws.cell(r, 2, df).fill = common.OPTION_FILL
+        dv = DataValidation(type="list", formula1='"%s"' % ",".join(vals), allow_blank=False)
+        ws.add_data_validation(dv)
+        dv.add("B%d" % r)
+        options.append({"cell": "%s!B%d" % (common.quote_sheet(SHEET), r), "label": lab, "values": vals, "default": df})
+    ws["C5"] = "← chọn ở ô vàng; Không (Hiện Spam) = bỏ Spam khỏi Tổng và biểu đồ"
+    ws["C5"].font = common.GREY_ITALIC
+    summaries.append(common.bang(wb, ws, "bl_tuy_chon", "A4:B7",
+                                 "3 ô chọn: Chỉ số (Số refdomain/Links to target), Phạm vi (chỉ domain còn link/cả domain đã mất), "
+                                 "Hiện Spam (Có/Không). Mọi bảng backlink tính theo 3 ô này."))
+    trang_thai = 'IF($B$6="%s","Còn","*")' % PHAM_VI[0]
+
+    def cong_thuc(site_txt, nhom_cell, nam_cell):
+        dk = '%s,"%s",%s,%s,%s,"<"&DATE(%s+1,1,1),%s,%s' % (
+            R("A"), site_txt.replace('"', '""'), R("K"), nhom_cell, R("H"), nam_cell, R("J"), trang_thai)
+        return 'IF($B$5="Links to target",SUMIFS(%s,%s),COUNTIFS(%s))' % (R("E"), dk, dk)
+
+    # vi tri
+    r_nam = 9
+    r_cl = r_nam + ny + 2
+    r_pct = r_cl + len(NHOM) + 3
+    r_site0 = r_pct + len(NHOM) + 3
+    site_rows = []
+    row = r_site0
+    for s in site_names:
+        site_rows.append((row, row + 1, row + 1 + ny))  # (nhan, tieu de, dong cuoi)
+        row = row + ny + 4
+    heads = ["Năm"] + NHOM + ["Tổng", "% DR>30 không spam", "% Spam"]
+    so = {"bl_tong": [], "bl_dr70": [], "bl_spam_pct": []}
+    # ---- bl_site
+    for si, s in enumerate(site_names):
+        r0, h, e = site_rows[si]
+        ws.cell(r0, 1, "%s – lũy kế đến hết năm (first seen trước 1/1 năm sau)" % s).font = Font(bold=True, color=XANH)
+        common.header_row(ws, h, 1, heads)
         for k, y in enumerate(nams):
             r = h + 1 + k
             ws.cell(r, 1, y).border = BOX
-            spam_f = cong_thuc("$A$%d" % row, "B$%d" % h, "$A%d" % r)[1:]
+            spam_f = cong_thuc(s, "B$%d" % h, "$A%d" % r)
             for j in range(len(NHOM)):
-                col = get_column_letter(2 + j)
-                f = cong_thuc("$A$%d" % row, "%s$%d" % (col, h), "$A%d" % r)
+                col = L(2 + j)
+                f = "=" + cong_thuc(s, "%s$%d" % (col, h), "$A%d" % r)
                 if j == 0:
-                    f = '=IF($B$5="Không",0,%s)' % spam_f
+                    f = '=IF($B$7="Không",0,%s)' % spam_f
                 c = ws.cell(r, 2 + j, f)
                 c.number_format = "#,##0"
                 c.border = BOX
@@ -241,61 +280,68 @@ def build(wb, inputs, opts, ctx):
             for j in (8, 9, 10):
                 ws.cell(r, j).border = BOX
             ws.cell(r, 8).font = Font(bold=True)
-        end = h + len(nams)
-        summaries.append(common.summary(
-            wb, ws, "BL_" + site, "A%d:J%d" % (h, end),
-            "%s: refdomain lũy kế theo năm (cột) x nhóm chất lượng; cột Tổng, %% DR>30 không spam, %% Spam. "
-            "Số liệu theo 2 ô chọn Chỉ số/Phạm vi và ô Hiện Spam." % site))
-        ch = BarChart()
-        ch.type = "col"
-        ch.grouping = "stacked"
-        ch.overlap = 100
-        ch.gapWidth = 60
-        ch.title = "%s – chất lượng refdomain lũy kế theo năm" % site
-        ch.y_axis.title = None
-        ch.y_axis.numFmt = "#,##0"
-        ch.y_axis.majorGridlines = None
-        ch.add_data(Reference(ws, min_col=2, max_col=1 + len(NHOM), min_row=h, max_row=end), titles_from_data=True)
-        ch.set_categories(Reference(ws, min_col=1, min_row=h + 1, max_row=end))
-        for s, color in zip(ch.series, MAU_NHOM):
-            s.graphicalProperties.solidFill = color
-            s.graphicalProperties.line.solidFill = color
-        ch.legend.position = "b"
-        ch.height, ch.width = 7.5, 15
-        ws.add_chart(ch, "L%d" % row)
-        blocks.append((site, row, h, end))
-        row = max(end + 3, row + 17)
-
-    # So sanh cac site o nam cuoi
-    ws.cell(row, 1, "So sánh tỉ trọng hiện tại (năm %d)" % nam_cuoi).font = Font(bold=True, size=12, color=XANH)
-    h = row + 1
-    for j, t in enumerate(["Website"] + NHOM + ["Tổng"], 1):
-        c = ws.cell(h, j, t)
-        c.font = Font(bold=True)
-        c.fill = HEADER_FILL
-        c.border = BOX
-    for k, (site, srow, sh, send) in enumerate(blocks):
-        r = h + 1 + k
-        ws.cell(r, 1, "=A%d" % srow).border = BOX
-        for j in range(len(NHOM) + 1):
-            col = get_column_letter(2 + j)
-            c = ws.cell(r, 2 + j, "=IFERROR(%s%d/$H%d,0)" % (col, send, send) if j < len(NHOM) else "=H%d" % send)
-            c.number_format = "0.0%" if j < len(NHOM) else "#,##0"
+        summaries.append(common.bang(
+            wb, ws, "bl_site", "A%d:J%d" % (h, e),
+            "%s: refdomain lũy kế theo năm (dòng) × nhóm chất lượng (cột B:G), Tổng, %% DR>30 không spam, %% Spam. "
+            "Theo 3 ô chọn bl_tuy_chon." % s, site=s, name="BL_" + s))
+        so["bl_spam_pct"].append(common.so_cell(ws, "J%d" % e, s))
+    # ---- bl_theo_nam
+    ws.cell(r_nam - 1, 1, "Tổng refdomain lũy kế theo năm").font = Font(bold=True, color=XANH)
+    common.header_row(ws, r_nam, 1, ["Năm"] + site_names)
+    for k, y in enumerate(nams):
+        r = r_nam + 1 + k
+        ws.cell(r, 1, y).border = BOX
+        for si in range(N):
+            c = ws.cell(r, 2 + si, "=H%d" % (site_rows[si][1] + 1 + k))
+            c.number_format = "#,##0"
             c.border = BOX
-    cmp_end = h + len(blocks)
-    summaries.append(common.summary(
-        wb, ws, "BL_so_sanh", "A%d:H%d" % (h, cmp_end),
-        "So sánh các site ở năm %d: tỉ trọng từng nhóm chất lượng và Tổng." % nam_cuoi))
-    note = common.note_area(ws, "A%d" % (cmp_end + 3), 10, 8, "NHẬN XÉT")
+    e_nam = r_nam + ny
+    summaries.append(common.bang(wb, ws, "bl_theo_nam", "A%d:%s%d" % (r_nam, L(1 + N), e_nam),
+                                 "Tổng refdomain lũy kế đến hết từng năm (dòng) × website (cột), theo 3 ô chọn."))
+    for si, s in enumerate(site_names):
+        so["bl_tong"].append(common.so_cell(ws, "%s%d" % (L(2 + si), e_nam), s))
+    # ---- bl_chat_luong (nam cuoi) + pct
+    ws.cell(r_cl - 1, 1, "Chất lượng refdomain năm %d (lũy kế)" % nam_cuoi).font = Font(bold=True, color=XANH)
+    common.header_row(ws, r_cl, 1, ["Nhóm (%d)" % nam_cuoi] + site_names)
+    common.header_row(ws, r_pct, 1, ["Nhóm (%d) %%" % nam_cuoi] + site_names)
+    for g, nh in enumerate(NHOM + ["Tổng"]):
+        r = r_cl + 1 + g
+        rp = r_pct + 1 + g
+        ws.cell(r, 1, nh).border = BOX
+        ws.cell(rp, 1, nh).border = BOX
+        for si in range(N):
+            e = site_rows[si][2]
+            c = ws.cell(r, 2 + si, "=%s%d" % (L(2 + g), e))
+            c.number_format = "#,##0"
+            c.border = BOX
+            col = L(2 + si)
+            c = ws.cell(rp, 2 + si, "=IFERROR(%s%d/%s$%d,0)" % (col, r, col, r_cl + 1 + len(NHOM)))
+            c.number_format = "0.0%"
+            c.border = BOX
+    e_cl = r_cl + 1 + len(NHOM)
+    summaries.append(common.bang(wb, ws, "bl_chat_luong", "A%d:%s%d" % (r_cl, L(1 + N), e_cl),
+                                 "Năm %d: số refdomain theo nhóm chất lượng (dòng) × website (cột), dòng cuối Tổng." % nam_cuoi,
+                                 total_rows=1))
+    summaries.append(common.bang(wb, ws, "bl_chat_luong_pct", "A%d:%s%d" % (r_pct, L(1 + N), r_pct + 1 + len(NHOM)),
+                                 "Năm %d: tỉ trọng nhóm chất lượng trong từng website." % nam_cuoi, total_rows=1))
+    for si, s in enumerate(site_names):
+        so["bl_dr70"].append(common.so_cell(ws, "%s%d" % (L(2 + si), r_cl + len(NHOM)), s))
+    note = common.note_area(ws, "L5", 10, 8, "NHẬN XÉT")
     ws.column_dimensions["A"].width = 18
     for j in range(2, 11):
-        ws.column_dimensions[get_column_letter(j)].width = 11
-    ws.column_dimensions["I"].width = 13
-    ws.freeze_panes = "A6"
+        ws.column_dimensions[L(j)].width = 11
+    charts = [
+        {"key": "bl_theo_nam", "bang": "bl_theo_nam", "loai": "col", "tieu_de": "Số lượng backlink theo thời gian"},
+        {"key": "bl_chat_luong", "bang": "bl_chat_luong", "loai": "col", "chuoi": "dong", "mau": MAU_NHOM_BRAND,
+         "tieu_de": "Chất lượng backlink"},
+        {"key": "bl_site", "bang": "bl_site", "loai": "col_stacked", "cot": NHOM, "mau": MAU_NHOM_BRAND,
+         "tieu_de": "{{ten}} – chất lượng refdomain lũy kế theo năm"},
+    ]
+    du_lieu = [{"key": "bl_data", "sheet": DATA_SHEET, "site_col": "Website", "cot": DU_LIEU_COT}]
     return common.entry(
         SHEET, KEY, DESC, list(inputs), data_sheet=DATA_SHEET, rows=last - 1, columns=COLUMNS,
         summaries=summaries, options=options, caveats=_caveats(sites, nams), notes=[note],
-        extra={"sites": [s for s, _ in sites], "years": nams})
+        extra={"sites": site_names, "years": nams, "so": so, "charts": charts, "du_lieu": du_lieu})
 
 
 def dung_file(inputs, out_path, nam_dau=None):

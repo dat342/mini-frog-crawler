@@ -119,3 +119,45 @@ def entry(sheet, module, purpose, inputs, data_sheet=None, rows=0, columns=None,
     if extra:
         e.update(extra)
     return e
+
+
+# ---------------------------------------------------------------- muc 8 (mau gan the)
+def bang(wb, ws, key, ref, desc, site=None, total_rows=0, name=None):
+    """Dang ky 1 bang tong hop co khoa (CONTRACT muc 8.2). ref 'A5:D12' trong ws, dong 1 = tieu de cot,
+    cot 1 = nhan. site: bang rieng cua 1 site (vd bl_site). total_rows: so dong tong o cuoi (bieu do bo qua)."""
+    nm = name or (key + ("_" + site if site else ""))
+    s = summary(wb, ws, nm, ref, desc)
+    s["key"] = key
+    if site:
+        s["site"] = site
+    if total_rows:
+        s["total_rows"] = total_rows
+    return s
+
+
+def so_cell(ws, cell, site=None):
+    """Muc extra.so: {"site": site, "cell": "'Sheet'!B5"}."""
+    return {"site": site, "cell": "%s!%s" % (quote_sheet(ws.title), cell)}
+
+
+def ten_site_theo_file(inputs, sites):
+    # type: (List[str], List[str]) -> List[str]
+    """Gan ten site cho tung file dau vao: uu tien domain xuat hien trong TEN FILE (vd 'seongon.com-refdomains-...csv',
+    'minifrog-seongon.com.json'); chi khi khong khop duoc tung file 1-1 moi gan theo thu tu (truong hop cu).
+    Tranh loi file sap theo ABC lam lech nhan site."""
+    import os
+    def norm(s):
+        s = str(s or "").lower().strip()
+        s = re.sub(r"^[a-z]+://", "", s)
+        return re.sub(r"^www\.", "", s).rstrip("/")
+    ns = [norm(s) for s in sites]
+    out = []
+    for p in inputs:
+        base = os.path.basename(str(p)).lower()
+        hit = [i for i, s in enumerate(ns) if s and s in base]
+        if len(hit) > 1:  # vd 'seo.com' nam trong 'abcseo.com': chon domain dai nhat
+            hit = [max(hit, key=lambda i: len(ns[i]))]
+        out.append(hit[0] if len(hit) == 1 else None)
+    if None not in out and len(set(out)) == len(out):
+        return [sites[i] for i in out]
+    return list(sites)

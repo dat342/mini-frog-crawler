@@ -1,4 +1,8 @@
-"""Do ket qua BD SEO vao MAU Excel cua nguoi dung (file xuat tu Google Sheets). Xem CONTRACT.md muc 7.
+"""[CU — thay boi xu_ly_data/the_mau.py + mau gan the xu_ly_data/mau/bd-seo.xlsx tu 20/11/2026.
+bd_seo khong goi file nay nua: recipe "template" duoc chuyen sang mau "bd-seo". Giu lai de doc/chuyen notes file cu;
+bo cuc module da doi (RD data gia tri, onpage co sheet 'Onpage data') nen do-vao-mau co the khong con chay dung.]
+
+Do ket qua BD SEO vao MAU Excel cua nguoi dung (file xuat tu Google Sheets). Xem CONTRACT.md muc 7.
 
     .venv/bin/python -m xu_ly_data.template_bd do-vao-mau --built tam.xlsx --manifest tam.manifest.json \
         --template "BD SEO _ c06_2026).xlsx" --out "<Khach> - BD SEO.xlsx"

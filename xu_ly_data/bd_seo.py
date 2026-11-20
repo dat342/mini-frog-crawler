@@ -18,7 +18,7 @@ from openpyxl import Workbook
 from openpyxl.comments import Comment
 
 # thu tu sheet theo mau BD: 1.5 -> 1.6 -> 1.7 -> 1.9
-MODULE_ORDER = ["onpage", "traffic_ahrefs", "content_topic", "backlink_rd"]
+MODULE_ORDER = ["onpage", "traffic_ahrefs", "content_topic", "backlink_rd", "volume_trend", "batch_overview"]
 MANIFEST_SHEET = "_manifest"
 
 
@@ -97,9 +97,10 @@ def _sort_sheets(wb, entries):
 
 def build_from_recipe(recipe, out_path, notes=None, cache_dir=None):
     """Dung file BD SEO tu recipe (dict). Ghi xlsx + manifest/recipe cua file. Tra ve manifest dict.
-    recipe co "template" (duong dan mau Excel) -> dung ra file tam roi do vao mau (CONTRACT muc 7)."""
-    if recipe.get("template"):
-        return _build_theo_mau(recipe, out_path, notes)
+    recipe co "mau" (ten trong xu_ly_data/mau/ hoac duong dan) -> dung ra file tam roi dien vao mau gan the
+    (CONTRACT muc 8). "template" cu (muc 7) duoc chuyen sang mau bd-seo."""
+    if recipe.get("mau") or recipe.get("template"):
+        return _build_mau_the(recipe, out_path, notes)
     out_path = os.path.abspath(out_path)
     p = _paths(out_path)
     if cache_dir:
@@ -127,7 +128,14 @@ def build_from_recipe(recipe, out_path, notes=None, cache_dir=None):
             continue
         before = set(wb.sheetnames)
         try:
-            entry = mod.build(wb, m.get("inputs") or [], m.get("opts") or {}, ctx)
+            inputs = list(m.get("inputs") or [])
+            if sites and len(inputs) == len(sites) and all(os.path.sep in str(x) or "." in os.path.basename(str(x)) for x in inputs):
+                # sap file theo thu tu site cua recipe (khach truoc) dua tren domain trong ten file
+                from .common import ten_site_theo_file
+                gan = ten_site_theo_file(inputs, sites)
+                if sorted(gan) == sorted(sites) and gan != list(sites):
+                    inputs = [inputs[gan.index(s)] for s in sites]
+            entry = mod.build(wb, inputs, m.get("opts") or {}, ctx)
         except Exception as e:  # noqa
             for n in set(wb.sheetnames) - before:
                 del wb[n]
@@ -162,28 +170,32 @@ def build_from_recipe(recipe, out_path, notes=None, cache_dir=None):
     return manifest
 
 
-def _build_theo_mau(recipe, out_path, notes=None):
-    """Dung ban tam (bo cuc tu dat, khong chen nhan xet) bang cac module, roi do vao mau bang GridCraft.
-    Nhan xet (notes.json cua file theo mau) duoc chen o buoc do vao mau: o Dinh huong + o Claude cham onpage."""
+def _build_mau_the(recipe, out_path, notes=None):
+    """Dung ban tam bang cac module (khong chen nhan xet) roi the_mau.dien_mau. Nhan xet (notes.json cua file ra)
+    chen o buoc dien mau: o nhan_xet (text + note nguon) va o Claude cham (text, gia tri vao cot bang chung)."""
     try:
-        from . import template_bd
+        from . import the_mau
     except ImportError:
-        import template_bd  # type: ignore
+        import the_mau  # type: ignore
     out_path = os.path.abspath(out_path)
     p = _paths(out_path)
-    tpl = os.path.abspath(os.path.expanduser(recipe["template"]))
-    if not os.path.isfile(tpl):
-        raise SystemExit("Không thấy file mẫu: %s" % tpl)
+    recipe = dict(recipe)
+    warn = []
+    if not recipe.get("mau"):
+        # tuong thich nguoc: "template" (do vao mau viet cung, template_bd) -> mau gan the bd-seo
+        warn.append("recipe 'template' đã chuyển sang mẫu gắn thẻ 'bd-seo' (xu_ly_data/mau/bd-seo.xlsx).")
+        recipe["mau"] = "bd-seo"
+        recipe.pop("template", None)
+    mau = the_mau.tim_mau(recipe["mau"])
     os.makedirs(p["cache"], exist_ok=True)
     tmp = os.path.join(p["cache"], "_ban-tam.xlsx")
     plain = dict(recipe)
-    plain.pop("template", None)
-    # file tam dung chung cache (traffic.json) voi file that; khong chen notes vao ban tam
+    plain.pop("mau", None)
     m0 = build_from_recipe(plain, tmp, notes={}, cache_dir=p["cache"])
     if notes is None:
         notes = json.load(open(p["notes"], encoding="utf-8")) if os.path.exists(p["notes"]) else {}
-    opts = {m.get("key"): (m.get("opts") or {}) for m in recipe.get("modules") or []}
-    manifest = template_bd.do_vao_mau(tmp, m0, tpl, out_path, notes=notes, opts=opts)
+    manifest = the_mau.dien_mau(tmp, m0, mau, out_path, recipe, notes=notes)
+    manifest["warnings"] = warn + manifest["warnings"]
     with open(p["manifest"], "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     with open(p["recipe"], "w", encoding="utf-8") as f:
@@ -191,7 +203,7 @@ def _build_theo_mau(recipe, out_path, notes=None):
     if not os.path.exists(p["notes"]):
         with open(p["notes"], "w", encoding="utf-8") as f:
             json.dump({}, f)
-    for f_ in (tmp, tmp + ".manifest.json", tmp + ".recipe.json"):
+    for f_ in (tmp, tmp + ".manifest.json", tmp + ".recipe.json", tmp + ".notes.json"):
         if os.path.exists(f_):
             os.remove(f_)
     return manifest
@@ -207,10 +219,12 @@ def rebuild(path):
 
 
 def _summary(m):
-    lines = ["Đã ghi: %s%s" % (m["file"], " (theo mẫu)" if m.get("layout") == "mau_bd" else "")]
+    lines = ["Đã ghi: %s%s" % (m["file"], " (mẫu: %s)" % os.path.basename(m["mau"]) if m.get("layout") == "mau_the" else "")]
     for e in m["sheets"]:
         lines.append("  - %s (%s): %d dòng data, %d vùng tổng hợp, %d ô nhận xét" % (
             e["sheet"], e["module"], e.get("rows") or 0, len(e.get("summaries") or []), len(e.get("notes") or [])))
+        for nt in e.get("notes") or []:
+            lines.append("      nhận xét %s [%s]" % (nt["cell"], nt.get("label", "")))
         for c in e.get("caveats") or []:
             lines.append("      ! " + c)
     for w in m["warnings"]:

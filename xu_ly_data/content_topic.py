@@ -245,7 +245,7 @@ def build(wb, inputs, opts, ctx):
     parsed = [doc_file(p, luat) for p in inputs]
     names = opts.get("sites") or None
     if not names and ctx.get("sites") and len(ctx["sites"]) == len(inputs):
-        names = ctx["sites"]
+        names = common.ten_site_theo_file(inputs, ctx["sites"])
     if names and len(names) == len(inputs):
         parsed = [(names[i], rows) for i, (_, rows) in enumerate(parsed)]
         for i, (s, rows) in enumerate(parsed):
@@ -329,28 +329,47 @@ def build(wb, inputs, opts, ctx):
             c.number_format = "0.0%" if kind == "pct" else "#,##0"
         return r0, rt - 1, rt
 
-    def ref(r_hdr, r_end, name_key, desc):
-        sums.append(common.summary(wb, ws, name_key, "A%d:%s%d" % (r_hdr, get_column_letter(1 + ncol), r_end), desc))
+    def ref(r_hdr, r_end, key, desc, name_key):
+        sums.append(common.bang(wb, ws, key, "A%d:%s%d" % (r_hdr, get_column_letter(1 + ncol), r_end), desc,
+                                total_rows=1, name=name_key))
 
-    # (a) Loai trang x Website
+    so = {"ct_so_trang": [], "ct_traffic": []}
+    # ct_tong: site (dong) x So trang, Traffic
     row = 4
-    a1 = bang(row, "(a1) Loại trang × Website: số trang", "Loại trang", LOAI_TRANG, "count", data_col="loai")
-    ref(row + 1, a1[2], "LoaiTrang_SoTrang", "Số trang theo loại trang × website (dòng cuối = tổng)")
-    row = a1[2] + 2
-    a2 = bang(row, "(a2) Loại trang × Website: traffic", "Loại trang", LOAI_TRANG, "sum", data_col="loai")
-    ref(row + 1, a2[2], "LoaiTrang_Traffic", "Traffic theo loại trang × website (dòng cuối = tổng)")
-    row = a2[2] + 2
-    a3 = bang(row, "(a3) Loại trang × Website: % traffic", "Loại trang", LOAI_TRANG, "pct",
-              tot_label="Tổng", ref_block=(a2[0], a2[2]))
-    ref(row + 1, a3[2], "LoaiTrang_PctTraffic", "% traffic theo loại trang trong từng website")
-    row = a3[2] + 2
+    ws.cell(row, 1, "Tổng số trang có traffic và traffic theo website").font = Font(bold=True, color=common.XANH)
+    common.header_row(ws, row + 1, 1, ["Website", "Số trang", "Traffic"])
+    for k, s_ in enumerate(sites):
+        r = row + 2 + k
+        ws.cell(r, 1, s_).border = common.BOX
+        c = ws.cell(r, 2, "=COUNTIFS(%s,$A%d)" % (D("A"), r))
+        c.number_format = "#,##0"
+        c.border = common.BOX
+        c = ws.cell(r, 3, "=SUMIFS(%s,%s,$A%d)" % (D("F"), D("A"), r))
+        c.number_format = "#,##0"
+        c.border = common.BOX
+        so["ct_so_trang"].append(common.so_cell(ws, "B%d" % r, s_))
+        so["ct_traffic"].append(common.so_cell(ws, "C%d" % r, s_))
+    sums.append(common.bang(wb, ws, "ct_tong", "A%d:C%d" % (row + 1, row + 1 + ncol),
+                            "Số trang có traffic và tổng traffic theo website (dòng = website)."))
+    row = row + 3 + ncol
     # (b) Topic x Website
     b1 = bang(row, "(b1) Topic × Website: số trang", "Topic", topics, "count", data_col="topic")
-    ref(row + 1, b1[2], "Topic_SoTrang", "Số trang theo topic × website (dòng cuối = tổng)")
+    ref(row + 1, b1[2], "ct_topic_sotrang", "Số trang theo topic × website (dòng cuối = tổng)", "Topic_SoTrang")
     row = b1[2] + 2
-    b2 = bang(row, "(b2) Topic × Website: traffic", "Topic", topics, "sum", data_col="topic")
-    ref(row + 1, b2[2], "Topic_Traffic", "Traffic theo topic × website (dòng cuối = tổng)")
+    b2 = bang(row, "(b2) Topic × Website: traffic", "Topic (traffic)", topics, "sum", data_col="topic")
+    ref(row + 1, b2[2], "ct_topic_traffic", "Traffic theo topic × website (dòng cuối = tổng)", "Topic_Traffic")
     row = b2[2] + 2
+    # (a) Loai trang x Website
+    a1 = bang(row, "(a1) Loại trang × Website: số trang", "Loại trang", LOAI_TRANG, "count", data_col="loai")
+    ref(row + 1, a1[2], "ct_loaitrang_sotrang", "Số trang theo loại trang × website (dòng cuối = tổng)", "LoaiTrang_SoTrang")
+    row = a1[2] + 2
+    a2 = bang(row, "(a2) Loại trang × Website: traffic", "Loại trang (traffic)", LOAI_TRANG, "sum", data_col="loai")
+    ref(row + 1, a2[2], "ct_loaitrang_traffic", "Traffic theo loại trang × website (dòng cuối = tổng)", "LoaiTrang_Traffic")
+    row = a2[2] + 2
+    a3 = bang(row, "(a3) Loại trang × Website: % traffic", "Loại trang (% traffic)", LOAI_TRANG, "pct",
+              tot_label="Tổng", ref_block=(a2[0], a2[2]))
+    ref(row + 1, a3[2], "ct_loaitrang_pct", "% traffic theo loại trang trong từng website", "LoaiTrang_PctTraffic")
+    row = a3[2] + 2
 
     # nhan xet
     notes = [common.note_area(ws, "A%d" % (row + 1), max(ncol + 1, 4), 8, "NHẬN XÉT")]
@@ -415,7 +434,16 @@ def build(wb, inputs, opts, ctx):
         SHEET, KEY, "Số trang và traffic theo loại trang và topic của từng website (Ahrefs Top pages)",
         inputs, data_sheet=DATA_SHEET, rows=len(all_rows), columns=columns, summaries=sums,
         options=[], caveats=caveats, notes=notes,
-        extra={"sites": sites})
+        extra={"sites": sites, "so": so,
+               "charts": [{"key": "ct_tong", "bang": "ct_tong", "loai": "bar", "cot": ["Số trang"],
+                           "tieu_de": "Số trang có traffic theo website"},
+                          {"key": "ct_loaitrang", "bang": "ct_loaitrang_sotrang", "loai": "pie",
+                           "tieu_de": "{{ten}} – số trang theo loại trang"},
+                          {"key": "ct_topic", "bang": "ct_topic_sotrang", "loai": "pie",
+                           "tieu_de": "{{ten}} – số trang theo topic"}],
+               "du_lieu": [{"key": "ct_data", "sheet": DATA_SHEET, "site_col": "Website",
+                            "cot": [["URL", "URL"], ["Traffic", "Traffic"], ["Top keyword", "Top keyword"],
+                                    ["Loại trang", "Loại Trang"], ["Topic", "Topic"], ["Top KW volume", "Top KW volume"]]}]})
 
 
 # ---------------------------------------------------------------- CLI

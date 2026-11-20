@@ -134,3 +134,94 @@ Người dùng chỉ nhận file trình bày ĐÚNG mẫu Excel của họ (xu�
   `.venv/bin/python -m xu_ly_data.template_bd chuyen-notes --tu "<cũ>.xlsx" --sang "<theo mẫu>.xlsx"` rồi `bd_seo rebuild`.
 - Hạn chế: style biểu đồ chèn mới (cột chồng từng site ở 1.9) là style mặc định GridCraft; trục ngày của chart chưa đặt được
   định dạng số nên tháng ở 1.6 ghi dạng chữ; mẫu không ẩn gridlines nên giữ nguyên; tối đa 3 site có radar/màu cột đánh giá theo mẫu.
+
+## 8. Mẫu gắn thẻ (thay template_bd viết cứng) — đặc tả chung cho engine, module và file mẫu
+
+Mục tiêu: mỗi cách trình bày = 1 file mẫu .xlsx do người dùng thiết kế (Google Sheets/Excel) + thẻ gõ trong ô.
+Engine `xu_ly_data/the_mau.py` đọc thẻ, đặt bảng/biểu đồ/dữ liệu/nhận xét đúng chỗ, giữ màu/font/ảnh/logo của mẫu.
+Mẫu lưu ở `xu_ly_data/mau/` (vd `bd-seo.xlsx`, `dinh-huong-du-an.xlsx`) kèm `<ten>.mau.json` mô tả (tên, module cần, số site tối đa).
+Ghi file bằng GridCraft CLI (openpyxl chỉ để ĐỌC mẫu — openpyxl save làm mất chart/ảnh).
+
+### 8.1 Cú pháp thẻ — cả ô chỉ chứa 1 thẻ, trừ thẻ chữ (8.1.5) có thể nằm giữa câu
+`{{loai:khoa|tham_so=gia_tri|...}}`
+
+1. `{{bang:<khoa>}}` — đặt bảng tổng hợp, ô thẻ = góc trên trái. Style: dòng tiêu đề lấy style ô thẻ; các dòng thân lấy
+   style ô ngay dưới ô thẻ (người thiết kế định dạng sẵn 2 ô đó). Tham số: `site=<i>` (bảng riêng của site thứ i),
+   `top=<n>` (chỉ n dòng đầu), `cot=<danh sách tên cột>` (chọn cột).
+2. `{{bieu_do:<khoa>|loai=bar|col|col_stacked|line|pie|doughnut|radar|...}}` — chèn biểu đồ, neo tại ô thẻ.
+   Dữ liệu = bảng `<khoa>` (engine tự đặt bảng nguồn ở sheet ẩn `_bang` nếu mẫu không có thẻ bảng tương ứng).
+   Tham số: `site=<i>` (chuỗi = cột của site i — cột có tiêu đề là domain site i), `site=*|buoc=<số cột>` (lặp 1 biểu đồ
+   mỗi site, dịch phải `buoc` cột), `rong=<px>`, `cao=<px>`, `tieu_de=<chữ, cho phép {{site}}/{{ten}}>`, `dong=<a-b>`.
+3. `{{du_lieu:<khoa>|kieu=canh_nhau|doc}}` — hiển thị dữ liệu thô: `canh_nhau` = mỗi site 1 khối cạnh nhau
+   (hàng 1 tên site, hàng 2 tiêu đề cột, cách 1 cột trống); `doc` = 1 bảng dài có cột Website. Đây là bản HIỂN THỊ (giá trị).
+   Công thức của mọi bảng luôn trỏ vào sheet dữ liệu ẩn chuẩn của module (vd `RD data`) — engine luôn chép sheet đó vào file
+   ra (ẩn) với đúng tên, nên công thức module giữ nguyên.
+4. `{{nhan_xet:<khoa>|khung=...}}` — ô Claude viết nhận xét (đăng ký vào manifest.notes, label = khoa). Engine ghi sẵn khung,
+   mặc định "Dữ liệu nghiên cứu:\n\nĐánh giá:\n\nĐịnh hướng:".
+5. Thẻ chữ, thay tại chỗ, nằm được giữa câu: `{{khach}}`, `{{nam}}`, `{{ngay}}` (dd/mm/yyyy), `{{site:i}}` (domain site i),
+   `{{ten:i}}` (tên thương hiệu site i, recipe `names`, mặc định = domain), `{{so:<khoa_so>|site=i}}` (1 con số, vd tb12 traffic).
+6. `{{lap_site|tu=i}}…` — KHÔNG làm ở bản đầu; lặp theo site dùng `site=*` của biểu đồ, `site=i` của bảng.
+Thẻ không nhận ra → báo lỗi rõ (vị trí ô + thẻ), không bỏ qua im lặng. Sheet trong mẫu không có thẻ → giữ nguyên.
+Recipe có `"sheets": [...]` → chỉ giữ các sheet đó (cộng sheet ẩn dữ liệu); sheet có thẻ mà module chưa chạy → xoá sheet
+và báo.
+
+### 8.2 Danh mục khóa (module phải đăng ký đúng khóa này trong manifest.summaries[].key / charts / data)
+Mọi bảng: dòng 1 = tiêu đề cột, cột 1 = nhãn; với bảng theo site, tiêu đề cột = domain đúng như recipe `sites`.
+| Module | bang | bieu_do mặc định (loai) | du_lieu | so |
+|---|---|---|---|---|
+| backlink_rd | `bl_theo_nam` (năm × site, tổng lũy kế), `bl_chat_luong` (nhóm DR × site, năm cuối), `bl_chat_luong_pct`, `bl_site` (site=i: năm × nhóm) | `bl_theo_nam` (col), `bl_chat_luong` (col), `bl_site` (col_stacked) | `bl_data` | `bl_tong`, `bl_dr70`, `bl_spam_pct` |
+| traffic_ahrefs | `tr_thang` (tháng × site), `tr_tong_hop` (TB12, TB12 trước, tăng trưởng × site) | `tr_thang` (line) | `tr_data` | `tr_tb12`, `tr_tang_truong`, `tr_dinh` |
+| content_topic | `ct_tong` (site × số trang, traffic), `ct_topic_sotrang`, `ct_topic_traffic`, `ct_loaitrang_sotrang`, `ct_loaitrang_traffic`, `ct_loaitrang_pct` | `ct_tong` (bar), `ct_loaitrang` (pie, site=i), `ct_topic` (pie, site=i) | `ct_data` | `ct_so_trang`, `ct_traffic` |
+| onpage | `op_diem` (nhóm × site), `op_tieu_chi` | `op_diem` (radar, site=i) | `op_data` | `op_diem_tong` |
+| volume_trend (mới) | `vol_thang` (tháng × tổng volume, 12 tháng), `vol_nhom` (nhóm × volume, %), `vol_chu_de` (chủ đề × volume, giảm dần), `vol_top_tu_khoa` (từ khóa, nhóm, chủ đề, volume TB) | `vol_thang` (col), `vol_nhom` (pie), `vol_chu_de` (bar) | `vol_data` | `vol_tong`, `vol_so_tu` |
+| batch_overview (mới) | `bo_tong_quan` (site × DR, refdomain, organic traffic, organic keywords, traffic value) | `bo_traffic` (bar) | `bo_data` | `bo_traffic`, `bo_dr` |
+Module mới phải theo API mục 1, có summaries với trường `key` như bảng trên; khóa `so:` khai báo trong entry `extra.so`
+= {"khoa": {"site": "<domain>", "cell": "'Sheet'!B5"}} hoặc công thức.
+
+### 8.3 Hiện thực (engine `the_mau.py`, 20/11/2026) — chi tiết bổ sung, không đổi 8.1/8.2
+Lệnh:
+```
+.venv/bin/python -m xu_ly_data.the_mau quet <mau.xlsx | tên trong mau/>     # liệt kê thẻ + kiểm khóa/tham số (rc≠0 nếu lỗi)
+.venv/bin/python -m xu_ly_data.the_mau dien --built tam.xlsx --manifest tam.xlsx.manifest.json --mau bd-seo --out ra.xlsx [--recipe r.json] [--notes n.json]
+.venv/bin/python -m xu_ly_data.the_mau chuyen-notes --tu "<cũ>.xlsx" --sang "<mới>.xlsx"   # nhận xét theo label, ô onpage theo (vấn đề, site)
+.venv/bin/python -m xu_ly_data.mau.tao_bd_seo        # tạo lại mau/bd-seo.xlsx từ file mẫu BD gốc
+```
+- bd_seo: recipe `"mau": "bd-seo"` (tên trong `xu_ly_data/mau/` hoặc đường dẫn) → build bản tạm `<file>.cache/_ban-tam.xlsx`
+  rồi `dien_mau`. Recipe cũ có `"template"` được CHUYỂN sang mẫu `bd-seo` (cảnh báo trong manifest); `template_bd.py` là bản cũ.
+  `rebuild` = build lại + chèn `notes.json`: ô nhan_xet ghi text + note "Nguồn: ô = giá trị" (GridCraft `review.newNote`);
+  ô Claude chấm ghi text, `values` vào ô cặp (`claude_pairs`, vd cột Bằng chứng) nếu có, không thì note.
+  Registry module: `MODULE_ORDER` gồm cả `volume_trend`, `batch_overview` (import động, thiếu/lỗi → cảnh báo, bỏ qua).
+- Dạng đăng ký chuẩn của module (thống nhất với volume_trend/batch_overview):
+  - `summaries[]`: `key` (khóa 8.2), `site` (bảng riêng 1 site, vd bl_site), `total_rows` (số dòng tổng cuối bảng; biểu đồ bỏ qua).
+    Helper: `common.bang(wb, ws, key, ref, desc, site=None, total_rows=0, name=None)`.
+  - `extra.so`: `{khoa: {"site", "cell"}}` hoặc `{khoa: [{"site", "cell"}, ...]}`; thay `cell` bằng `"formula"` (+ `"sheet"`,
+    `"num_fmt"`) khi là công thức. `common.so_cell(ws, "B5", site)`.
+  - `extra.charts`: `[{key, bang, loai, cot?: tên cột|list, chuoi?: "cot"|"dong", tieu_de?: (cho phép {{ten}}), mau?: [hex]}]`
+    (`anchor` nếu có bị bỏ qua). Khóa bieu_do không đăng ký mà trùng khóa bảng → vẽ thẳng bảng đó.
+  - `extra.du_lieu`: dict hoặc list `{key, sheet, site_col?: "Website", cot?: [[cột nguồn, tên hiển thị], ...]}`
+    (mặc định mọi cột trừ cột site).
+  - `extra.validations`: `[{"range": "'Sheet'!F10:H90", "values": [...]}]`; `options` (ô chọn) cũng thành dropdown ở vị trí mới.
+  - `extra.claude_cells`, `claude_items`, `claude_pairs` (ô chấm → ô bằng chứng) — engine đổi sang toạ độ file ra.
+- Công thức trong bảng: chỉ trỏ (a) sheet dữ liệu ẩn của module, (b) ô thuộc bảng đã đăng ký cùng sheet kết quả. Engine đổi địa chỉ
+  (b) sang vị trí bảng trong file ra; bảng được tham chiếu mà mẫu không đặt (hoặc đặt thiếu dòng/cột do top/cot) → bản đầy đủ
+  ở sheet ẩn `_bang`; ô lẻ ngoài bảng (vd ô tổng B4 của volume_trend) cũng được chép vào `_bang`. `_bang` không dùng thì xoá.
+- Sheet dữ liệu ẩn: 'RD data' (Trạng thái/Nhóm/Năm là GIÁ TRỊ), 'Traffic data' (+ cột `Kỳ` = mm/yyyy chữ, khóa của tr_thang),
+  'TP data', 'Onpage data' (bản ghi crawl), 'Volume data', 'Batch data'.
+- Bổ sung danh mục: bang `bl_tuy_chon` (3 ô chọn Chỉ số/Phạm vi/Hiện Spam — công thức backlink trỏ vào đây), `op_da_cham`
+  (tiến độ chấm); so `bo_keywords`, `bo_rd`, `bo_ai_responses` (batch_overview — chưa đăng ký thì engine báo lỗi rõ).
+  `op_diem` chỉ gồm các nhóm + dòng Tổng. `op_tieu_chi` cột: Nhóm | Nhóm con | Vấn đề | Vì sao | Yêu cầu | Đánh giá×site |
+  Bằng chứng×site | Ngưỡng tự chấm | Người chấm. bieu_do mặc định: `ct_loaitrang` = ct_loaitrang_sotrang, `ct_topic` = ct_topic_sotrang,
+  `bl_chat_luong` chuỗi theo dòng (nhóm), `bl_site` chỉ 6 cột nhóm.
+- Tham số bổ sung: bang `bo_tieu_de=1` (không ghi dòng tiêu đề, thân lấy style dòng thẻ); bieu_do `chuoi=dong|cot`, `cot=`, `mau=#..,#..`.
+  `site=i` trên bảng chung (cột = domain) → chỉ cột site i (bảng) / chuỗi site i (biểu đồ). Biểu đồ tròn mặc định 1 chuỗi (cột số đầu).
+- Style: dòng tiêu đề = ô thẻ, dòng thân = ô ngay dưới, xét TỪNG CỘT (ô cùng dòng bên phải nếu có định dạng, không thì ô gần nhất
+  bên trái); định dạng số luôn lấy từ module; dòng tổng in đậm; ô thân xuống dòng → engine tính chiều cao dòng. Ô định dạng thừa bên
+  phải (mẫu chuẩn bị nhiều cột site hơn) bị xoá định dạng. du_lieu canh_nhau: hàng tên site = ô thẻ, tiêu đề cột = ô dưới, thân = ô dưới nữa;
+  độ rộng cột khối 1 chép sang các khối sau.
+- Chỗ trống: bảng/du_lieu dài hơn khoảng trống bên dưới (tới ô có nội dung/thẻ/ảnh kế tiếp trong cùng cột) → chèn dòng (cảnh báo).
+- Thẻ site=i > số site recipe → để trống ô. Sheet mà mọi thẻ dữ liệu thuộc module chưa chạy → xoá sheet + cảnh báo; sheet có một phần
+  thiếu → để trống các thẻ đó + cảnh báo. Khóa `nhan_xet` là nhãn tự do (không kiểm danh mục).
+- Manifest file ra: `layout: "mau_the"`, `mau`, `deleted_sheets`; mỗi module 1 entry (`sheet` = sheet hiện nhiều bảng nhất,
+  `data_sheet` = sheet ẩn, `summaries` có `key` [+ `site`], bảng > 55 dòng chia thêm `TH_<key>_p1..`, `data_blocks`, `charts`, `so`
+  đã đổi toạ độ, `claude_cells`…); mỗi sheet có thẻ nhan_xet thêm 1 entry `module: "mau"` với `notes` (label = khóa).
+- Mẫu kèm `<ten>.mau.json`: `ten`, `mo_ta`, `modules` (hoặc `module_can`/`module_tuy_chon`), `so_site_toi_da`, `nhan_xet`.
