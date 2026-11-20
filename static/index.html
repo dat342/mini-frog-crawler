@@ -111,6 +111,20 @@ td.url-cell a:hover{text-decoration:underline}
 .img-list{margin-top:8px;max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:#fff}
 .img-list table{font-size:12px}
 .count-note{color:var(--muted);font-size:12px;margin-top:10px}
+
+/* Xử lý data BD SEO */
+#bdCard>summary{cursor:pointer;font-weight:800;font-size:15px;color:var(--primary)}
+.bd-sites .site-row{display:flex;gap:8px;margin-bottom:6px}
+.bd-sites .site-row input{flex:1}
+.bd-sheets{display:flex;flex-wrap:wrap;gap:14px;margin-top:6px}
+.bd-sheets label{display:flex;align-items:center;gap:6px;font-weight:600;margin:0}
+.bd-sheets input{width:auto}
+.bd-drop{border:2px dashed var(--border);border-radius:10px;padding:14px;text-align:center;color:var(--muted);font-size:13px;background:var(--soft);cursor:pointer}
+.bd-drop.over{border-color:var(--secondary);background:#eaf0ff}
+.bd-files{margin-top:6px;font-size:12px;color:var(--muted)}
+.bd-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:14px}
+#bdResult{margin-top:14px;font-size:13px}
+#bdResult ul{margin:4px 0 8px 18px}
 </style>
 </head>
 <body>
@@ -122,6 +136,58 @@ td.url-cell a:hover{text-decoration:underline}
       <p>Crawl theo thứ tự: Trang chủ → Danh mục/Dịch vụ → Sản phẩm → Blog · chạy local, không cần API</p>
     </div>
   </header>
+
+
+  <!-- Xử lý data BD SEO -->
+  <details class="card" id="bdCard">
+    <summary>📊 Xử lý data BD SEO (dựng file Excel 1.5 / 1.6 / 1.7 / 1.9)</summary>
+    <div style="margin-top:14px">
+      <div class="row">
+        <div><label for="bdClient">Tên khách</label><input type="text" id="bdClient" placeholder="vd: Decathlon"></div>
+      </div>
+      <div style="margin-top:12px">
+        <label>Danh sách website (khách + đối thủ)</label>
+        <div class="bd-sites" id="bdSites"></div>
+        <button class="btn btn-outline" type="button" id="bdAddSite" style="padding:6px 14px;font-size:12px">+ Thêm website</button>
+      </div>
+      <div style="margin-top:14px">
+        <label>Chọn sheet cần dựng</label>
+        <div class="bd-sheets">
+          <label><input type="checkbox" class="bd-sheet" value="onpage"> 1.5 Onpage</label>
+          <label><input type="checkbox" class="bd-sheet" value="traffic" checked> 1.6 Traffic (Ahrefs API)</label>
+          <label><input type="checkbox" class="bd-sheet" value="content"> 1.7 Content</label>
+          <label><input type="checkbox" class="bd-sheet" value="backlink" checked> 1.9 Backlink</label>
+        </div>
+      </div>
+      <div class="bd-grid">
+        <div data-for="onpage">
+          <label>1.5 Onpage: file Mini Frog (.xlsx / .json)</label>
+          <div class="bd-drop" data-field="file_onpage">Kéo thả hoặc bấm để chọn file</div>
+          <div class="bd-files"></div>
+          <div class="checkline"><input type="checkbox" id="bdUseCrawl"><label for="bdUseCrawl" style="margin:0;font-weight:500">Dùng kết quả crawl hiện tại trong Mini Frog</label></div>
+        </div>
+        <div data-for="content">
+          <label>1.7 Content: Top pages CSV (mỗi site 1 file)</label>
+          <div class="bd-drop" data-field="file_content">Kéo thả hoặc bấm để chọn file</div>
+          <div class="bd-files"></div>
+          <label style="margin-top:10px">File rules (JSON, phân loại topic)</label>
+          <div class="bd-drop" data-field="rules" data-single="1">Chọn file rules .json</div>
+          <div class="bd-files"></div>
+        </div>
+        <div data-for="backlink">
+          <label>1.9 Backlink: Referring domains CSV (mỗi site 1 file)</label>
+          <div class="bd-drop" data-field="file_backlink">Kéo thả hoặc bấm để chọn file</div>
+          <div class="bd-files"></div>
+          <div class="hint">Tên file dạng &lt;domain&gt;-refdomains-....csv để tool nhận ra site.</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+        <button class="btn btn-primary" id="bdBuildBtn" type="button">⚙ Dựng file</button>
+        <span id="bdStatus" class="hint"></span>
+      </div>
+      <div id="bdResult"></div>
+    </div>
+  </details>
 
   <!-- Cấu hình -->
   <div class="card" id="configCard">
@@ -685,6 +751,80 @@ $('tbody').onclick = e => {
   </td>`;
   tr.after(detail);
 };
+
+// ---------- Xử lý data BD SEO ----------
+(function () {
+  const bdFiles = {};   // field -> [File]
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function addSiteRow(v) {
+    const d = document.createElement('div');
+    d.className = 'site-row';
+    d.innerHTML = '<input type="text" placeholder="domain.com" value="' + esc(v || '') + '">' +
+      '<button class="btn btn-outline" type="button" style="padding:4px 12px">✕</button>';
+    d.querySelector('button').onclick = () => d.remove();
+    $('bdSites').appendChild(d);
+  }
+  for (let i = 0; i < 3; i++) addSiteRow('');
+  $('bdAddSite').onclick = () => addSiteRow('');
+
+  function refreshSheets() {
+    const on = {};
+    document.querySelectorAll('.bd-sheet').forEach(c => on[c.value] = c.checked);
+    document.querySelectorAll('#bdCard [data-for]').forEach(d => d.style.display = on[d.dataset.for] ? '' : 'none');
+  }
+  document.querySelectorAll('.bd-sheet').forEach(c => c.onchange = refreshSheets);
+  refreshSheets();
+
+  function showFiles(drop) {
+    const list = bdFiles[drop.dataset.field] || [];
+    drop.nextElementSibling.textContent = list.length ? list.map(f => f.name).join(', ') : '';
+  }
+  document.querySelectorAll('.bd-drop').forEach(drop => {
+    const f = drop.dataset.field, single = drop.dataset.single === '1';
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.multiple = !single; inp.style.display = 'none';
+    drop.appendChild(inp);
+    const take = files => {
+      const arr = Array.from(files);
+      bdFiles[f] = single ? arr.slice(0, 1) : (bdFiles[f] || []).concat(arr);
+      showFiles(drop);
+    };
+    drop.onclick = e => { if (e.target === drop) inp.click(); };
+    inp.onchange = () => { take(inp.files); inp.value = ''; };
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files); };
+  });
+
+  $('bdBuildBtn').onclick = async () => {
+    const fd = new FormData();
+    fd.append('client', $('bdClient').value.trim());
+    document.querySelectorAll('#bdSites input').forEach(i => { if (i.value.trim()) fd.append('sites', i.value.trim()); });
+    document.querySelectorAll('.bd-sheet:checked').forEach(c => fd.append('sheets', c.value));
+    if ($('bdUseCrawl').checked) fd.append('onpage_use_crawl', '1');
+    Object.keys(bdFiles).forEach(k => bdFiles[k].forEach(f => fd.append(k, f, f.name)));
+    const btn = $('bdBuildBtn'), st = $('bdStatus'), out = $('bdResult');
+    btn.disabled = true; st.textContent = 'Đang dựng file (sheet traffic có thể mất vài chục giây nếu gọi API)...'; out.innerHTML = '';
+    try {
+      const res = await fetch('/api/bd/build', {method: 'POST', body: fd});
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.detail || res.status);
+      st.textContent = '';
+      let h = '<p><a class="btn btn-accent" href="' + j.download_url + '">⬇ Tải file Excel</a></p>' +
+        '<p class="hint">Lưu tại: ' + esc(j.folder) + '</p>';
+      j.sheets.forEach(s => {
+        h += '<p><b>' + esc(s.sheet) + '</b> (' + s.rows + ' dòng data)</p>';
+        if (s.caveats.length) h += '<ul>' + s.caveats.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>';
+      });
+      if (j.warnings.length) h += '<p style="color:var(--warn)"><b>Cảnh báo</b></p><ul>' +
+        j.warnings.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>';
+      out.innerHTML = h;
+    } catch (e) {
+      st.textContent = '';
+      out.innerHTML = '<p style="color:var(--danger)">Lỗi: ' + esc(e.message) + '</p>';
+    } finally { btn.disabled = false; }
+  };
+})();
 </script>
 </body>
 </html>

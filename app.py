@@ -2,11 +2,17 @@
 """Web app quét URL - backend FastAPI."""
 import asyncio
 import csv
+import datetime as dt
+import email.parser
+import email.policy
 import io
+import json
+import re
 from pathlib import Path
+from urllib.parse import quote
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -383,3 +389,142 @@ async def export_csv():
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="crawl-{host}.csv"'},
     )
+
+
+# ---------------- Xử lý data BD SEO (xu_ly_data) ----------------
+
+BD_ROOT = (Path.home() / "Downloads" / "Claude" / "SEONGON" / "5-inbox" / "bd-seo").resolve()
+BD_SHEETS = {"onpage": "onpage", "traffic": "traffic_ahrefs", "content": "content_topic", "backlink": "backlink_rd"}
+BD_EXT = {".csv", ".json", ".xlsx"}
+
+
+def _slug(text: str) -> str:
+    s = re.sub(r"[^\w\-]+", "-", (text or "").strip(), flags=re.UNICODE).strip("-")
+    return s[:60] or "khach"
+
+
+def _safe_name(name: str) -> str:
+    base = Path((name or "file").replace("\\", "/")).name
+    base = re.sub(r"[^\w.\-]+", "_", base, flags=re.UNICODE).lstrip(".")
+    return base or "file"
+
+
+def _parse_multipart(content_type: str, body: bytes):
+    """Tự parse multipart/form-data (không cần python-multipart). Trả về (fields, files)."""
+    if "multipart/form-data" not in (content_type or ""):
+        raise HTTPException(400, "Cần gửi multipart/form-data")
+    msg = email.parser.BytesParser(policy=email.policy.default).parsebytes(
+        b"Content-Type: " + content_type.encode("latin-1") + b"\r\n\r\n" + body)
+    fields, files = {}, {}
+    for part in msg.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        data = part.get_payload(decode=True) or b""
+        fn = part.get_filename()
+        if fn is not None:
+            if data:
+                files.setdefault(name, []).append((fn, data))
+        else:
+            fields.setdefault(name, []).append(data.decode("utf-8", "replace"))
+    return fields, files
+
+
+def _bd_build(fields: dict, files: dict, crawl_records) -> dict:
+    from xu_ly_data.bd_seo import build_from_recipe
+    client = (fields.get("client") or [""])[0].strip()
+    if not client:
+        raise HTTPException(400, "Thiếu tên khách")
+    sites = []
+    for raw in fields.get("sites", []):
+        for part in re.split(r"[\n,;]+", raw):
+            d = re.sub(r"^https?://", "", part.strip().lower()).strip("/")
+            if d and d not in sites:
+                sites.append(d)
+    sheets = [x for x in fields.get("sheets", []) if x in BD_SHEETS]
+    if not sheets:
+        raise HTTPException(400, "Chưa chọn sheet nào")
+    folder = (BD_ROOT / ("%s-%s" % (_slug(client), dt.date.today().strftime("%Y%m%d")))).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+
+    def save(field):
+        out = []
+        for fn, data in files.get(field, []):
+            ext = Path(fn).suffix.lower()
+            if ext not in BD_EXT:
+                raise HTTPException(400, "File %s: chỉ nhận .csv, .json, .xlsx" % fn)
+            dest = folder / _safe_name(fn)
+            dest.write_bytes(data)
+            out.append(str(dest))
+        return out
+
+    modules = []
+    for sh in sheets:
+        key = BD_SHEETS[sh]
+        if sh == "traffic":
+            if not sites:
+                raise HTTPException(400, "Sheet 1.6 cần danh sách website")
+            modules.append({"key": key, "inputs": sites, "opts": {"thang": 36}})
+        elif sh == "onpage":
+            inputs = save("file_onpage")
+            if (fields.get("onpage_use_crawl") or [""])[0] == "1":
+                if not crawl_records:
+                    raise HTTPException(400, "Mini Frog chưa có kết quả crawl để dùng cho 1.5 Onpage")
+                host = _job.root_host if _job else "crawl"
+                dest = folder / ("%s-minifrog.json" % _safe_name(host))
+                dest.write_text(json.dumps({"records": crawl_records, "total": len(crawl_records)},
+                                           ensure_ascii=False), encoding="utf-8")
+                inputs.append(str(dest))
+            if not inputs:
+                raise HTTPException(400, "Sheet 1.5 cần file Mini Frog hoặc chọn dùng kết quả crawl hiện tại")
+            modules.append({"key": key, "inputs": inputs, "opts": {}})
+        elif sh == "backlink":
+            inputs = save("file_backlink")
+            if not inputs:
+                raise HTTPException(400, "Sheet 1.9 cần file Referring domains CSV")
+            modules.append({"key": key, "inputs": inputs, "opts": {}})
+        elif sh == "content":
+            inputs = save("file_content")
+            if not inputs:
+                raise HTTPException(400, "Sheet 1.7 cần file Top pages CSV")
+            opts = {}
+            rules = save("rules")
+            if rules:
+                opts["rules"] = rules[0]
+            modules.append({"key": key, "inputs": inputs, "opts": opts})
+    recipe = {"client": client, "sites": sites, "modules": modules}
+    out_path = folder / ("%s - BD SEO.xlsx" % _slug(client))
+    manifest = build_from_recipe(recipe, str(out_path))
+    return {
+        "ok": True,
+        "file": str(out_path),
+        "download_url": "/api/bd/download?path=" + quote(str(out_path)),
+        "folder": str(folder),
+        "sheets": [{"sheet": e["sheet"], "rows": e["rows"], "caveats": e["caveats"]} for e in manifest["sheets"]],
+        "warnings": manifest.get("warnings", []),
+    }
+
+
+@app.post("/api/bd/build")
+async def bd_build(request: Request):
+    fields, files = _parse_multipart(request.headers.get("content-type", ""), await request.body())
+    use_crawl = (fields.get("onpage_use_crawl") or [""])[0] == "1"
+    records = list(_job.records) if (use_crawl and _job) else None
+    try:
+        return await asyncio.to_thread(_bd_build, fields, files, records)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, "Lỗi dựng file: %s" % e)
+
+
+@app.get("/api/bd/download")
+async def bd_download(path: str):
+    p = Path(path).resolve()
+    try:
+        p.relative_to(BD_ROOT)
+    except ValueError:
+        raise HTTPException(403, "Đường dẫn nằm ngoài thư mục bd-seo")
+    if not p.is_file() or p.suffix.lower() not in {".xlsx", ".json"}:
+        raise HTTPException(404, "Không thấy file")
+    return FileResponse(p, filename=p.name)
